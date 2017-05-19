@@ -43,13 +43,14 @@ panel.cor <- function(x, y, digits=2, prefix="", cex.cor)
 
 # lets go!
 
-jm_data<-read.csv("input_data/dens_abs_1km_extract.csv", h=T)
+jm_data<-read.csv("input_data/dens_abs_1km_extract_correct.csv", h=T)
+
 
 nrow(jm_data)
 length(which(is.na(jm_data$SST)==TRUE))
 length(which(is.na(jm_data$CHLA)==TRUE))
-
-jm_data<-na.omit(jm_data) ## remove NAs
+jm_data<-na.omit(jm_data) ## remove NAs, wow ok good I did this! 
+# na.omit is integral to information theoretic approach1
 jm_data[jm_data$BATHY>0,]$BATHY<-0
 
 jm_data$YEAR<-substr(jm_data$St_date, 7,10)
@@ -63,10 +64,71 @@ jm_data$DAYNIGHT<-factor(jm_data$DAYNIGHT)
 
 jm_data$Location<-factor(jm_data$Location)
 jm_data$Survey<-factor(jm_data$Survey)
-jm_data$effort<-0
-for(i in unique(jm_data$Survey)){
-  jm_data[jm_data$Survey==i,]$effort<-nrow(jm_data[jm_data$Survey==i,])
+
+### Add correct effort offset as per reviewers comments
+
+# just tidy up, there are some points in Survey: Izu3 that don't belong there, we will remove
+# DONE ###########################################
+#j1<-jm_data[jm_data$Survey=="Izu3",]
+#pres_ras<-rasterize(data.frame(j1$Longitude,
+#                               j1$Latitude),
+#                    rasterTemplate, background=NA, field=1)
+#surv_pol<-rasterToPolygons(pres_ras, na.rm=T)
+#row.names(j1)<-1:nrow(j1)
+#surv_spdf<-SpatialPolygonsDataFrame(surv_pol, data=j1)
+
+#surv<-surveys[surveys$Survey=="Izu3",]
+#plot(surv_spdf)
+#plot(surv, add=T, col=2)
+#surv_gd<-surv_spdf[surv,]
+#plot(surv_gd, add=T, border=3)
+
+#j_temp<-jm_data[jm_data$Survey!="Izu3",]
+#out<-rbind(j_temp, surv_gd@data)
+#write.csv(out, "input_data/dens_abs_1km_extract_correct.csv", quote=F, row.names=F)
+
+##############################################
+
+library(rgdal)
+library(raster)
+library(rgeos)
+surveys<-readOGR(dsn="GIS", layer="all_cols_survey_tracks")
+rasterTemplate<-raster("extract_rasters/bathy_1km.tif")
+
+
+jm_data$perc1km_surv<-0
+for(i in 1:nrow(jm_data))
+{
+d1<-jm_data[i,]  
+pres_ras<-rasterize(data.frame(d1$Longitude, d1$Latitude),
+                    rasterTemplate, background=NA, field=1)
+sp1<-SpatialPoints(data.frame(d1$Longitude, d1$Latitude), proj4string=CRS("+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"))
+
+pres_ras<-crop(pres_ras, extent(sp1)+0.02)
+surv<-surveys[surveys$Survey==d1$Survey,]
+
+DgProj <- CRS(paste("+proj=laea +lon_0=135 +lat_0=34", sep=""))
+TshapeProj <- spTransform(surv, CRS=DgProj)
+TBuffProj <- gBuffer(TshapeProj, width=100, quadsegs=50)
+#plot(TBuffProj)
+#plot(TshapeProj, add=T, col="grey")
+surv_buff <- spTransform(TBuffProj, CRS=CRS( "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"))#from ras
+
+onekmsq<-rasterToPolygons(pres_ras, na.rm=T)
+#plot(onekmsq)
+#plot(surv_buff, add=T)
+area_surv<-gIntersection(surv_buff, onekmsq, byid = T)
+#plot(area_surv, add=T, border=2)
+jm_data[i,]$perc1km_surv<-(area(area_surv)/area(onekmsq))*100
+print(i)
 }
+
+#jm_data[jm_data$perc1km_surv==999,]$perc1km_surv<-0.5
+#jm_data[jm_data$perc1km_surv>100,]$perc1km_surv<-100
+#summary(jm_data$perc1km_surv)
+
+#write.csv(jm_data, "input_data/dens_abs_1km_extract_correct.csv", quote=F, row.names=F)
+
 
 
 ############~~~~~~~~~~ MULTICOLLINEARITY ANALYSES ~~~~~~~~~~~#########
@@ -98,14 +160,27 @@ exp(-0.002432)
 rawdf<-jm_data
 
 trfdf<-rawdf
-trfdf$G_SST<-log(trfdf$G_SST+0.001)
-trfdf$CHLA<-log(trfdf$CHLA)
-trfdf$G_CHLA<-log(trfdf$G_CHLA)
-trfdf$BATHY<-log((trfdf$BATHY+trfdf$BATHY^2)+1)
-trfdf$SLOPE<-sqrt(trfdf$SLOPE)
-trfdf$D_KURO<-sqrt(trfdf$D_KURO)
-trfdf$D_COL<-sqrt(trfdf$D_COL)
-trfdf$D_LAND<-sqrt(trfdf$D_LAND)
+
+# remove outliers
+boxes(tr_dens[,7:16])
+
+tr_dens<-tr_dens[tr_dens$G_SST<4,]
+tr_dens<-tr_dens[tr_dens$SLOPE<22,]
+tr_dens<-tr_dens[tr_dens$CHLA<14,]
+
+# standardize for lme4
+library(vegan)
+enviro_std<-decostand(tr_dens[,7:16], method="standardize")
+tr_dens_std<-data.frame(tr_dens[,1:6], enviro_std, tr_dens[,17:21])
+
+
+#trfdf$CHLA<-log(trfdf$CHLA)
+#trfdf$G_CHLA<-log(trfdf$G_CHLA)
+#trfdf$BATHY<-log((trfdf$BATHY+trfdf$BATHY^2)+1)
+#trfdf$SLOPE<-sqrt(trfdf$SLOPE)
+#trfdf$D_KURO<-sqrt(trfdf$D_KURO)
+#trfdf$D_COL<-sqrt(trfdf$D_COL)
+#trfdf$D_LAND<-sqrt(trfdf$D_LAND)
 
 hists(trfdf[,6:16])
 
@@ -145,13 +220,20 @@ sum(resid(night_mod, type='pearson')^2)/df.residual(night_mod)
 library(MASS)
 night_mod2<-glm.nb(Density~Survey, data=biro_temp)
 sum(resid(night_mod2, type='pearson')^2)/df.residual(night_mod2) #1
-summary(night_mod2)
+summary(night_mod2) 
+# the night surveys are pres-abs only so wouldnt affect density!
 
 
 ##########******** DENSITY MODEL ********##########
 ############~~~~~~~************~~~~~~~~~~~#########
 
-tr_dens<-filter(trfdf, Survey!="Oki1" & Survey!="Birojima5" & Survey!="Birojima6")
+tr_dens<-trfdf[-which(trfdf$Survey=="Oki1" | trfdf$Survey=="Birojima5" | trfdf$Survey=="Birojima6"),]
+
+## drop Hachijojima colony as per reviewers comments, no actually keep - its basically part of izu
+
+tr_dens$Location<-factor(tr_dens$Location)
+tr_dens$Survey<-factor(tr_dens$Survey) #  drop omitted factor levels
+#tr_dens$YEAR<-factor(tr_dens$YEAR) dont need year as Survey RF splits perfectly
 
 # Investigation of outliers in Density data
 
@@ -187,450 +269,138 @@ for ( i in co_seq)
 }
 
 
-
-
-
-
 ### Density set to < 25 !! ###
 tr_dens<-tr_dens[tr_dens$Density<25,]
 
+##############################
+
+#par(fig=c(0,1,0,0.35))
+boxplot(tr_dens$Density, horizontal=T, bty="n", xlab="JM counts", ylim=c(0,20), cex.lab=1.2)
+#par(fig=c(0,1,0.15,1), new=T)
+x <- sort(tr_dens$Density)
+hist(tr_dens$Density, freq=F, main="", col="darkgray", ylim=c(0,0.9),breaks=seq(0,25,1), xlab="");box()
+legend("topright", c("log-normal distribution", "exponential distribution","poisson distribution","nbinom distribution", "density counts"),
+       lty=c(1,1,3,1,2), lwd=c(1.5,1,3,2,1), col=c(2, "grey30","darkgreen","black", 4), bty="n")
+#distributions
+lines(density(tr_dens$Density), lty=2, col=4)
+#negative binomial
+curve(dnbinom(round(x), size=0.5, mu=1), lty=1,lwd=2, col="black", add=T)
+#lognormal
+curve(dlnorm(x, meanlog=0, sdlog=1), lwd=1.5, add=T, col=2)
+#exponential
+curve(dexp(x), add=T, lty=1, col="grey30", lwd=1.5)
+#poisson
+lines(dpois(x,mean(tr_dens$Density)), lty=3, lwd=3, col="darkgreen")
+rug(tr_dens$Density, ticksize = 0.02)
+
+
 ## Go for Density<25 cutoff to make modelling better
 
+table(tr_dens$Survey)
+tr_dens$Survey<-relevel(tr_dens$Survey, ref="Hchijojima1")
+# we drop 'Location' variable as arbitrary.
+#Also drop D_LAND
 
-glmden1<-glmer(Density~BATHY + SLOPE + D_COL + COL_INF + D_LAND +
-                 D_KURO + SST + G_SST + CHLA + YEAR + MONTH + offset(log(effort))+
-                 (1|Location/Survey), data=tr_dens, family=poisson(link=log), na.action=na.omit)
-g_temp<-glmden1
-#failed to converge
-glmden1 <- refit(glmden1)
-glmerConverge(glmden1) #slightly different from g_temp - does work dod on final model for precise coeficients
+glmden1<-glmer(Density~BATHY + SLOPE + D_COL + COL_INF + 
+                 D_KURO + SST + G_SST + CHLA + MONTH + offset(log(perc1km_surv))+
+                 (1|Survey), data=tr_dens, family=poisson(link=log))
+# sweet convereges!
 
-print(sum(resid(glmden1, type='pearson')^2)/df.residual(glmden1)) #8.93
-cor(fitted(glmden1), tr_dens$Density) #0.317
+print(sum(resid(glmden1, type='pearson')^2)/df.residual(glmden1)) #4.73
+cor(fitted(glmden1), tr_dens$Density) #0.382
 plot(glmden1) #average
 
-tr_dens$obs<-seq(1:nrow(tr_dens)) # add observation level random effect
 
-glmden2<-glmer(Density~BATHY + SLOPE + D_COL + COL_INF + D_LAND +
-                 D_KURO + SST + G_SST + CHLA + YEAR + MONTH + offset(log(effort))+
-                 (1|Location/Survey) + (1|obs), data=tr_dens, family=poisson(link=log), na.action=na.omit)
-
-print(sum(resid(glmden2, type='pearson')^2)/df.residual(glmden2)) #0.0383
-cor(fitted(glmden2), tr_dens$Density) #0.999 ?!!!! amazing!
-plot(glmden2) #good but zero infl
-
-glmden2.5<-glmer(Density~BATHY + SLOPE + D_COL + COL_INF + D_LAND +
-                   D_KURO + SST + G_SST + CHLA + offset(log(effort))+
-                   (1|Location/Survey) + (1|YEAR) +(1|MONTH), data=tr_dens, family=poisson(link=log), na.action=na.omit)
-
-print(sum(resid(glmden2.5, type='pearson')^2)/df.residual(glmden2.5)) #8.919
-cor(fitted(glmden2.5), tr_dens$Density) #0.31
-plot(glmden2.5) #
-
-
-glmden3<-glmmadmb(Density~BATHY + SLOPE + D_COL + COL_INF + D_LAND + D_KURO + SST + G_SST + CHLA + offset(log(effort))+(1|Location/Survey) + (1|YEAR) + (1|MONTH), zeroInflation=T, data=tr_dens, family="poisson")
-
-
-##testing cor on independent data
-
-train<-tr_dens[sample(1:nrow(tr_dens), (nrow(tr_dens)/100*75)),]
-test<-tr_dens[sample(1:nrow(tr_dens), (nrow(tr_dens)/100*25)),]
-
-
-glm_tr<-update(glmden2, data=train)
-
-p1<-predict(glm_tr, train, type="response", re.form=~0)
-cor(p1, train$Density) #0.255
-p2<-predict(glm_tr, train, type="response", re.form=~(1|Location/Survey))
-cor(p2, train$Density) #0.256
-p3<-predict(glm_tr, train, type="response", re.form=~(1|Location/Survey)+(1|obs))
-cor(p3, train$Density) #0.999
-p4<-predict(glm_tr, train, type="response", re.form=~(1|obs))
-cor(p4, train$Density) #0.999
-
-p5<-predict(glmden2, tr_dens, type="response", re.form=~(1|Location/Survey)+(1|obs))
-cor(p5, tr_dens$Density) #0.999
-
-p6<-predict(glmden2, tr_dens, type="response", re.form=~0)
-cor(p6, tr_dens$Density) #0.19
-
-gamm1<-gamm4(Density~s(BATHY, k=5) + s(SLOPE, k=5) + s(D_COL, k=5) + COL_INF + D_LAND +
-               s(D_KURO, k=5) + s(SST, k=5) + G_SST + s(CHLA, k=5), random=~
-               (1|Location/Survey) +(1|YEAR) +(1|MONTH), data=tr_dens, family=poisson(link=log))
-
-
-
-glmden2<-glmer(Density~BATHY + SLOPE + D_COL + COL_INF + D_LAND +
-                 D_KURO + SST + G_SST + CHLA + YEAR + MONTH + offset(log(effort))+
-                 (1|Location/Survey), data=tr_dens, family=poisson(link=log), na.action=na.omit)
-#glmerConverge(glmden2)
-
-glmden3<-glmer(Density~BATHY + SLOPE + D_COL + COL_INF + D_LAND +
-                 D_KURO + SST + G_SST + CHLA + YEAR + MONTH + offset(log(effort))+
-                 (1|Survey), data=tr_dens, family=poisson(link=log), na.action=na.omit)
-#glmerConverge(glmden3)
-
-anova(glmden3, glmden2, glmden1)
-
-sum(resid(glmden1, type='pearson')^2)/df.residual(glmden1) #1.02
-sum(resid(glmden2, type='pearson')^2)/df.residual(glmden2) #4.86
-sum(resid(glmden3, type='pearson')^2)/df.residual(glmden3) #4.84
-
-## mixed modelling alternatives
-
-glm1<-glm(Density~BATHY + SLOPE + D_COL + COL_INF + D_LAND +
-            D_KURO + SST + G_SST + CHLA + YEAR + MONTH + Location + Survey + offset(log(effort))
-          , data=tr_dens, family=poisson(link=log), na.action=na.omit)
-
-print(sum(resid(glm1, type='pearson')^2)/df.residual(glm1)) #4.89
-cor(fitted(glm1), tr_dens$Density) # 0.3128945
-
-library(MASS)
-glm2<-glm.nb(Density~BATHY + SLOPE + D_COL + COL_INF + D_LAND +
-               D_KURO + SST + G_SST + CHLA + YEAR + MONTH + Location + Survey + offset(log(effort))
-             , data=tr_dens, na.action=na.omit)
-
-print(sum(resid(glm2, type='pearson')^2)/df.residual(glm2)) #1.114596
-cor(fitted(glm2), tr_dens$Density) # 0.2905831
-
-library(pscl)
-f1<-formula(Density~BATHY + SLOPE + D_COL + COL_INF + D_LAND +
-              D_KURO + SST + G_SST + CHLA + YEAR + MONTH  +
-              offset(log(effort)) |
-              BATHY + SLOPE + D_COL + COL_INF + D_LAND +
-              D_KURO + SST + G_SST + CHLA + YEAR +MONTH) # Survey, Location, YEAR and MONTH are collinear. choose which. Survey on own or month + year are best
-
-
-Zip1<-zeroinfl(f1, dist="poisson", link="logit", data=tr_dens)
-
-Zinb1<-zeroinfl(f1, dist="negbin", link="logit", data=tr_dens)
-
-print(sum(resid(Zip1, type='pearson')^2)/df.residual(Zip1))
-cor(fitted(Zip1), tr_dens$Density)
-
-print(sum(resid(Zinb1, type='pearson')^2)/df.residual(Zinb1))
-cor(fitted(Zinb1), tr_dens$Density)
-
-Hup<-hurdle(f1, dist="poisson", link="logit", data=tr_dens)
-
-Hub<-hurdle(f1, dist="negbin", link="logit", data=tr_dens)
-
-print(sum(resid(Hup, type='pearson')^2)/df.residual(Hup))
-cor(fitted(Hup), tr_dens$Density)
-
-print(sum(resid(Hub, type='pearson')^2)/df.residual(Hub))
-cor(fitted(Hub), tr_dens$Density)
-
-AIC(Zip1, Zinb1, Hup, Hub)
-
-
-glmden_nb<-glmer.nb(Density~BATHY + SLOPE + D_COL + COL_INF + D_LAND +
-                      D_KURO + SST + G_SST + CHLA + YEAR + MONTH + offset(log(effort))+
-                      (1|Location/Survey), data=tr_dens, na.action=na.omit) # have to remove random slope
-
-sum(resid(glmden_nb, type='pearson')^2)/df.residual(glmden_nb) #1.07 
-cor(fitted(glmden_nb), tr_dens$Density)
-
-#gam test
-library(mgcv)
-library(MASS)
-
-gam1<-gam(Density~s(BATHY, k=5) + s(SLOPE, k=5) + s(D_COL, k=5) + COL_INF + D_LAND +
-            s(D_KURO, k=5) + s(SST, k=5) + G_SST + s(CHLA, k=5) + YEAR +MONTH
-          +s(Location,  Survey, bs="re"), data=tr_dens, family=poisson(link=log))
-
-sum(resid(gam1, type='pearson')^2)/df.residual(gam1) #4.6 
-cor(fitted(gam1), tr_dens$Density) #0.35
-qplot(x=fitted(gam1), y=resid(gam1, type="pearson"))
-
-gam1_nb<-gam(Density~s(BATHY, k=5) + s(SLOPE, k=5) + s(D_COL, k=5) + COL_INF + D_LAND +
-               s(D_KURO, k=5) + s(SST, k=5) + G_SST + s(CHLA, k=5) + YEAR +MONTH
-             +s(Location,  Survey, bs="re"), data=tr_dens, family=nb())
-
-sum(resid(gam1_nb, type='pearson')^2)/df.residual(gam1_nb) #1.0403 
-cor(fitted(gam1_nb), tr_dens$Density) #0.29912
-qplot(x=fitted(gam1_nb), y=resid(gam1_nb, type="pearson"))
-
-gam1_zip<-gam(Density~s(BATHY, k=5) + s(SLOPE, k=5) + s(D_COL, k=5) + COL_INF + D_LAND +
-                s(D_KURO, k=5) + s(SST, k=5) + G_SST + s(CHLA, k=5) + YEAR +MONTH
-              +s(Location,  Survey, bs="re"), data=tr_dens, family=ziplss)
-
-sum(resid(gam1_zip)^2)/df.residual(gam1_zip) #1.0403 
-cor(fitted(gam1_zip), tr_dens$Density) #0.29912
-qplot(x=fitted(gam1_zip), y=resid(gam1_zip))
-
-library(nlme)
-gamm1<-gamm(Density~s(BATHY, k=5) + s(SLOPE, k=5) + s(D_COL, k=5) + COL_INF + D_LAND +
-              s(D_KURO, k=5) + s(SST, k=5) + G_SST + s(CHLA, k=5)+ YEAR +MONTH
-            +s(Location,  Survey, bs="re"), data=tr_dens, family=nb())
-
-
-
-
-#test for non-linearity in variables 
-
-tr_dens$glmer1_resid<-resid(glmer1)
-p<-ggplot(data=tr_dens, aes(x=BATHY, y=glmer1_resid));p+geom_point()+stat_smooth(formulas=y~s(x),method="gam")
-summary(gam(glmer1_resid~s(BATHY), data=tr_dens)) # 0.1 sig
-
-p<-ggplot(data=tr_dens, aes(x=SLOPE, y=glmer1_resid));p+geom_point()+stat_smooth(formulas=y~s(x),method="gam")
-summary(gam(glmer1_resid~s(SLOPE), data=tr_dens)) # 0.01 sig
-
-p<-ggplot(data=tr_dens, aes(x=D_COL, y=glmer1_resid));p+geom_point()+stat_smooth(formulas=y~s(x),method="gam")
-summary(gam(glmer1_resid~s(D_COL), data=tr_dens)) #0.01 sig
-
-p<-ggplot(data=tr_dens, aes(x=COL_INF, y=glmer1_resid));p+geom_point()+stat_smooth(formulas=y~s(x),method="gam")
-summary(gam(glmer1_resid~s(COL_INF), data=tr_dens)) #factor?
-
-p<-ggplot(data=tr_dens, aes(x=D_LAND, y=glmer1_resid));p+geom_point()+stat_smooth(formulas=y~s(x),method="gam")
-summary(gam(glmer1_resid~s(D_LAND), data=tr_dens)) #nope
-
-p<-ggplot(data=tr_dens, aes(x=D_KURO, y=glmer1_resid));p+geom_point()+stat_smooth(formulas=y~s(x),method="gam")
-summary(gam(glmer1_resid~s(D_KURO), data=tr_dens)) #0.0001 sig
-
-p<-ggplot(data=tr_dens, aes(x=SST, y=glmer1_resid));p+geom_point()+stat_smooth(formulas=y~s(x),method="gam")
-summary(gam(glmer1_resid~s(SST), data=tr_dens)) #0.0001 sig
-
-p<-ggplot(data=tr_dens, aes(x=G_SST, y=glmer1_resid));p+geom_point()+stat_smooth(formulas=y~s(x),method="gam")
-summary(gam(glmer1_resid~s(G_SST), data=tr_dens)) #nope
-
-p<-ggplot(data=tr_dens, aes(x=CHLA, y=glmer1_resid));p+geom_point()+stat_smooth(formulas=y~s(x),method="gam")
-summary(gam(glmer1_resid~s(CHLA), data=tr_dens)) #0.0001 sig
-
-# non-linear gamm version of glmer1
-
-gamm1<-gamm4(Density~s(BATHY, k=5) + s(SLOPE, k=5) + s(D_COL, k=5) + COL_INF + D_LAND +
-               s(D_KURO, k=5) + s(SST, k=5) + G_SST + s(CHLA, k=5) + YEAR + MONTH, random=~
-               (1+Density|Location/Survey), data=tr_dens, family=poisson(link=log))
-
-# non-linear alternatives
-library(splines)
-
-glmden1_spline<-glmer(Density~ns(BATHY, df=2) + ns(SLOPE, df=2) + ns(D_COL, df=2) + COL_INF + D_LAND +
-                        ns(D_KURO, df=2) + ns(SST, df=2) + G_SST + ns(CHLA, df=2) + YEAR + MONTH + offset(log(effort))+
-                        (1+Density|Location/Survey), data=tr_dens, family=poisson(link=log), na.action=na.omit)
-
-glmden1_spline1.5<-glmer(Density~ns(BATHY, df=3) + ns(SLOPE, df=3) + ns(D_COL, df=3) + COL_INF + D_LAND +
-                           ns(D_KURO, df=3) + ns(SST, df=3) + G_SST + ns(CHLA, df=3) + YEAR + MONTH + offset(log(effort))+
-                           (1+Density|Location/Survey), data=tr_dens, family=poisson(link=log), na.action=na.omit)
-
-
-glmden1_spline2<-glmer(Density~ns(BATHY, df=4) + ns(SLOPE, df=4) + ns(D_COL, df=4) + COL_INF + D_LAND +
-                         ns(D_KURO, df=4) + ns(SST, df=4) + G_SST + ns(CHLA, df=4) + YEAR + MONTH + offset(log(effort))+
-                         (1+Density|Location/Survey), data=tr_dens, family=poisson(link=log), na.action=na.omit)
-
-glmden1_spline_bs<-glmer(Density~bs(BATHY, df=2) + bs(SLOPE, df=2) + bs(D_COL, df=2) + COL_INF + D_LAND +
-                           bs(D_KURO, df=2) + bs(SST, df=2) + G_SST + bs(CHLA, df=2) + YEAR + MONTH + offset(log(effort))+
-                           (1+Density|Location/Survey), data=tr_dens, family=poisson(link=log), na.action=na.omit)
-
-glmden1_spline2_bs<-glmer(Density~bs(BATHY, df=4) + bs(SLOPE, df=4) + bs(D_COL, df=4) + COL_INF + D_LAND +
-                            bs(D_KURO, df=4) + bs(SST, df=4) + G_SST + bs(CHLA, df=4) + YEAR + MONTH + offset(log(effort))+
-                            (1+Density|Location/Survey), data=tr_dens, family=poisson(link=log), na.action=na.omit)
-
-
-glmden1_poly<-glmer(Density~poly(BATHY, 2) + poly(SLOPE, 2) + poly(D_COL,2) + COL_INF + D_LAND +
-                      poly(D_KURO, 2) + poly(SST, 2) + G_SST + poly(CHLA, 2) + YEAR + MONTH + offset(log(effort))+
-                      (1+Density|Location/Survey), data=tr_dens, family=poisson(link=log), na.action=na.omit)
-
-gamden1<-gamm4(Density~s(BATHY, k=5) + s(SLOPE, k=5) + s(D_COL, k=5) + COL_INF + D_LAND +
-                 s(D_KURO, k=5) + s(SST, k=5) + G_SST + s(CHLA, k=5) + YEAR + MONTH + offset(log(effort)),
-               random=~(1+Density|Location/Survey), data=tr_dens, family=poisson(link=log)) #worked with random slope??
-
-gamden_nb<-gamm4(Density~s(BATHY, k=5) + s(SLOPE, k=5) + s(D_COL, k=5) + COL_INF + D_LAND +
-                   s(D_KURO, k=5) + s(SST, k=5) + G_SST + s(CHLA, k=5) + YEAR + MONTH + offset(log(effort)),
-                 random=~(1|Location/Survey), data=tr_dens, family=nb), link = "log")) # try nb also
-# note no random slope in negbin. doesnt work.
-
-AIC(glmden3, glmden2, glmden1, glmden_nb, glmden1_spline, glmden1_spline2, glmden1_spline_bs,  glmden1_spline2_bs, glmden1_poly, gamden1$mer)
-
-sum(resid(gamden1$mer, type='pearson')^2)/df.residual(gamden1$mer) #1.03 # almost as gd as gamden1 
-
-plot(gamden1$mer, resid(., type='pearson')~fitted(.), type=c('smooth', 'p'), abline=0)
-plot(glmden1, resid(., type='pearson')~fitted(.), type=c('smooth', 'p'), abline=0)
-
-library(car)
-qqPlot(resid(gamden1$mer))
-qqPlot(resid(glmer1))
-
-library(lattice)
-shapiro.test(ranef(gamden1$mer)$'Survey:Location'[,1])
-qqmath(ranef(gamden1$mer)$'Survey:Location'[,1], type=c('p', 'r'))
-
-shapiro.test(ranef(gamden1$mer)$'Survey:Location'[,2])
-qqmath(ranef(gamden1$mer)$'Survey:Location'[,2], type=c('p', 'r'))
-
-#trial best 2: glmden1 and; gamden1 with RAC term
-
-
-glm_RAC_term<-makeRAC(mod=glmden1, ras=rasTempl, dat=tr_dens)
-
-tr_dens<-cbind(tr_dens, glm_RAC_term)
-
-glmden1_RAC<-update(glmden1, ~. + glm_RAC_term)
-
-gam_RAC_term<-makeRAC(mod=gamden1$mer, ras=rasTempl, dat=tr_dens)
-
-tr_dens<-cbind(tr_dens, gam_RAC_term)
-
-gamden1_RAC<-update(gamden1, ~. + gam_RAC_term)
-
-#validation.. kinda
-
-AIC(glmden3, glmden2, glmden1, glmden_nb, gamden1$mer, glmden1_RAC, gamden1_RAC$mer)
-
-glmden1_pred<- predict(glmden1, type="response", newdata=tr_dens, re.form=~0)
-glmden_nb_pred<- predict(glmden_nb, type="response", newdata=tr_dens, re.form=~0)
-gamden1_pred<- predict(gamden1$gam, type="response", newdata=tr_dens, re.form=~0)
-
-glmden1_re1_pred<- predict(glmden1, type="response", newdata=tr_dens, re.form=~(1+Density|Location)) # no nesing
-glmden1_re_pred<- predict(glmden1, type="response", newdata=tr_dens, re.form=~(1+Density|Location/Survey))
-glmden2_re_pred<- predict(glmden1, type="response", newdata=tr_dens, re.form=~(1|Location/Survey)) # no density
-glmden_nb_re_pred<- predict(glmden_nb, type="response", newdata=tr_dens, re.form=~(1|Location/Survey))
-gamden1_re_pred<- predict(gamden1$gam, type="response", newdata=tr_dens, re.form=~(1+Density|Location/Survey)) # only predicts fixed effects
-
-qplot(x=glmden1_pred, y=tr_dens$Density)
-cor(glmden1_pred, tr_dens$Density) #0.20
-
-qplot(x=glmden1_re_pred, y=tr_dens$Density)
-cor(glmden1_re_pred, tr_dens$Density) #0.76! Density v. important!
-cor(glmden2_re_pred, tr_dens$Density) #0.24
-
-qplot(x=glmden_nb_pred, y=tr_dens$Density)
-cor(glmden_nb_pred, tr_dens$Density) #0.25
-qplot(x=glmden_nb_re_pred, y=tr_dens$Density)
-cor(glmden_nb_re_pred, tr_dens$Density) #0.27
-
-qplot(x=gamden1_pred, y=tr_dens$Density)
-cor(gamden1_pred, tr_dens$Density) #0.27
-
-qplot(x=fitted(gamden1$mer), y=tr_dens$Density)
-cor(fitted(gamden1$mer), tr_dens$Density) #0.81! use fitted. fitted returns prediction with RF effects
-
-library(lmodel2)
-caltest<-lmodel2(log(tr_dens$Density+0.000001)~log(fitted(glmden1)), nperm=100)
-caltest<-lmodel2(log(tr_dens$Density+0.000001)~log(fitted(gamden1$mer)), nperm=100)
-
-
-# with full model
-
-#SST=rep(seq(14.5, 20.1, 0.01),3)
-varb=rep(seq(min(tr_dens$D_LAND), max(tr_dens$D_LAND), length.out=500),3) #G_SST
-
-
-pred_frame<-data.frame(SST=median(tr_dens$SST), G_SST=median(tr_dens$G_SST), CHLA=median(tr_dens$CHLA),
-                       D_KURO=median(tr_dens$D_KURO), BATHY=median(tr_dens$BATHY), SLOPE=median(tr_dens$SLOPE), D_COL=median(tr_dens$D_COL), 
-                       COL_INF=median(tr_dens$COL_INF),D_LAND=varb, YEAR="2008",
-                       MONTH="04", effort=median(tr_dens$effort), Location=c(rep("Birojima", 500), rep("Izu", 500), rep("Hchijojima", 500)))
-
-
-pred_frame$glmden1<-predict(glmden1, type='response', newdata=pred_frame, re.form=~(1|Location))
-pred_frame$glmden1_spline<-predict(glmden1_spline, type='response', newdata=pred_frame, re.form=~(1|Location))
-pred_frame$glmden1_spline2<-predict(glmden1_spline2, type='response', newdata=pred_frame, re.form=~(1|Location))
-pred_frame$glmden1_spline1.5<-predict(glmden1_spline1.5, type='response', newdata=pred_frame, re.form=~(1|Location))
-pred_frame$glmden1_poly<-predict(glmden1_poly, type='response', newdata=pred_frame, re.form=~(1|Location))
-pred_frame$glmden1_spline_bs<-predict(glmden1_spline_bs, type='response', newdata=pred_frame, re.form=~(1|Location))
-pred_frame$glmden1_spline2_bs<-predict(glmden1_spline2_bs, type='response', newdata=pred_frame, re.form=~(1|Location))
-pred_frame$gamden1<-predict(gamden1$gam, type='response', newdata=pred_frame, re.form=~(1|Location))
-
-ggplot(data=pred_frame, aes(x=D_LAND, y=glmden1, colour=Location)) + 
-  scale_x_discrete(tr_dens$D_LAND^2) + 
-  geom_point(data=tr_dens, aes(y=jitter(tr_dens$Density, 2), x=tr_dens$D_LAND)) +
-  geom_smooth(stat='identity') +theme_bw() 
-
-
-
-for (i in c("G_SST",  "D_KURO",  "SLOPE", "D_COL"))
-  
-{
-  varb=rep(seq(min(tr_dens[,which(names(tr_dens)==i)]), max(tr_dens[,which(names(tr_dens)==i)]), length.out=500))
-  
-  
-  pred_frame<-data.frame(SST=median(tr_dens$SST), G_SST=median(tr_dens$G_SST), CHLA=median(tr_dens$CHLA),
-                         D_KURO=median(tr_dens$D_KURO), BATHY=median(tr_dens$BATHY), SLOPE=median(tr_dens$SLOPE), D_COL=median(tr_dens$D_COL), 
-                         COL_INF=median(tr_dens$COL_INF),D_LAND=median(tr_dens$D_LAND), YEAR="2009",
-                         MONTH="05", effort=median(tr_dens$effort), Location=rep("Izu", 500),
-                         gam_RAC_term=0)  # Location RE doesnt seem to impact but year and month certainly do!
-  
-  pred_frame[,which(names(pred_frame)==i)]<-varb
-  
-  print(i)
-  pred_frame$glmden1_spline_full<-predict(gamden_col_front$gam, type='response', newdata=pred_frame, re.form=~0)
-  
-  names(pred_frame)[which(names(pred_frame)==i)]<-"myvarib"
-  names(tr_dens)[which(names(tr_dens)==i)]<-"myvarib"
-  
-  print(ggplot(data=pred_frame, aes(x=myvarib, y=glmden1_spline_full, colour=Location)) + 
-          geom_point(data=tr_dens, aes(y=jitter(tr_dens$Density, 2), x=myvarib)) +
-          geom_smooth(stat='identity') +theme_bw())
-  
-  names(tr_dens)[which(names(tr_dens)=="myvarib")]<-i
-  
-  readline()
-}
-
-#global_model
-
-tr_dens$obs<-seq(1:nrow(tr_dens))
-
-gamden1<-gamm4(Density~s(BATHY, k=5) + s(SLOPE, k=5) + s(D_COL, k=5) + COL_INF + D_LAND +
-                 s(D_KURO, k=5) + s(SST, k=5) + G_SST + s(CHLA, k=5) + YEAR + MONTH + offset(log(effort)),
-               random=~(1|Location/Survey) + (1|obs), data=tr_dens, family=poisson(link=log)) #worked with random slope??
-
-#checking k values
-
-gamtemp<-gam(Density~s(BATHY, k=3) + s(SLOPE, k=3) + s(D_COL, k=3) + COL_INF + s(D_LAND, k=3) +
-               s(D_KURO, k=3) + s(SST, k=3) + G_SST + s(CHLA, k=3) + YEAR + MONTH + offset(log(effort)),
-             data=tr_dens, family=poisson(link=log))
-
-gam.check(gamtemp) # for most varib, k=3 too low
-
-
-gamtemp2<-gam(Density~s(BATHY, k=5) + s(SLOPE, k=5) + s(D_COL, k=5) + COL_INF + s(D_LAND, k=5) +
-                s(D_KURO, k=5) + s(SST, k=5) + G_SST + s(CHLA, k=5) + YEAR + MONTH + offset(log(effort)),
-              data=tr_dens, family=poisson(link=log))
-
-gam.check(gamtemp2) 
-
-gamtemp3<-gam(Density~s(BATHY, k=10) + s(SLOPE, k=10) + s(D_COL, k=10) + COL_INF + s(D_LAND, k=10) +
-                s(D_KURO, k=10) + s(SST, k=10) + s(G_SST, k=10) + s(CHLA, k=10) + YEAR + MONTH + offset(log(effort)),
-              data=tr_dens, family=poisson(link=log))
-
-gam.check(gamtemp3) # probs go with 10, nah it takes too long and we want 'ecologically' interpretable outputs: go with 5
-
-## Information theoretic approach to model selection ##
-
-tr_dens$gam_RAC_term<-0
-tr_dens$obs<-seq(1, nrow(tr_dens))
-
-library(raster)
-rasTempl<-raster("extract_rasters/bathy_1km.tif")
-
-makeRAC2<-function(mod=mod, ras=rasTempl, dat=tr_dens){ 
-  values(rasTempl)<-NA
-  xy_residuals <-cbind(tr_dens$Longitude, tr_dens$Latitude, resid(mod$mer))
-  rasTempl[cellFromXY(rasTempl,xy_residuals[,1:2])]<-xy_residuals[,3]
-  focal_rac_rast<-focal(rasTempl, w=matrix(1,3,3), fun = mean, na.rm = TRUE)
-  focal_rac_vect<-extract(focal_rac_rast,xy_residuals[,1:2])
-  return(focal_rac_vect)}
-
+glmden_nb<-glmer.nb(Density~BATHY + SLOPE + D_COL + D_KURO + SST +
+                      G_SST + CHLA + MONTH + offset(log(perc1km_surv))+
+                      (1|Survey), data=tr_dens) 
+# does not converge
+
+# try without RE
+
+glmden_nb<-glm.nb(Density~BATHY + SLOPE + D_COL +  D_KURO + poly(SST,2) +
+                    G_SST + CHLA + MONTH + offset(log(perc1km_surv))+
+                    Survey, data=tr_dens) 
+
+sum(resid(glmden_nb, type='pearson')^2)/df.residual(glmden_nb) #1.27
+cor(fitted(glmden_nb), tr_dens$Density)#0.3
+
+#try glmmadmb
+library(glmmADMB)
+# D_LAND and COL_INF dropped cos theyre crap and collinear
+admb_mod<-glmmadmb(Density~BATHY + SLOPE + D_COL 
+                    D_KURO + SST + G_SST + CHLA + MONTH + offset(log(perc1km_surv))+
+                     (1|Survey), zeroInflation=T, data=tr_dens, family="poisson")
+
+sum(resid(admb_mod, type='pearson')^2)/df.residual(admb_mod) #2.43
+cor(fitted(admb_mod), tr_dens$Density) #0.31
+# still a little overdispursed but can live with it
+
+
+# see if any varibs need a poly
+library(reshape2)
+d1<-melt(tr_dens, id.vars=c("Density", "St_date","Location", "Survey", "MONTH","DAYNIGHT", "YEAR"))
+# Very raw view of how a poly might better suit data than linear
+g1<-ggplot(data=d1, aes(y=Density, x=value))
+g1+geom_jitter(height=0.1, size=0.5)+geom_smooth(method="glm", colour=2)+
+  geom_smooth(method="glm", formula=y~poly(x,2), colour=3)+facet_wrap(~variable, scale="free")
+
+
+
+m_lin<-glm(Density~SST,
+                data=tr_dens, family="poisson")
+m_pol<-glm(Density~poly(SST,2),
+             data=tr_dens, family="poisson")
+d1<-data.frame(dens=tr_dens$Density, SST=tr_dens$SST, m_lin=predict(m_lin, new_data=tr_dens, type="response"), m_pol=predict(m_pol, new_data=tr_dens, type="response"))
+g1<-ggplot(data=d1, aes(y=dens, x=SST))
+g1+geom_point()+geom_line(aes(y=m_lin, x=SST), colour=2)+
+  geom_line(aes(y=m_pol, x=SST), colour=3)
+anova(m_lin, m_pol)
+#poly model better for sst
+
+#update model
+admb_final<-glmmadmb(Density~BATHY + SLOPE + D_COL +
+                     D_KURO + poly(SST,2) + G_SST + CHLA + MONTH +
+                      offset(log(perc1km_surv))+ (1|Survey),
+                   zeroInflation=T, data=tr_dens, family="poisson")
+
+sum(resid(admb_mod, type='pearson')^2)/df.residual(admb_mod) #2.62
+cor(fitted(admb_mod), tr_dens$Density) #0.23
+summary(admb_final)
+
+# Negative binomial
+
+admb_nb<-glmmadmb(Density~BATHY + SLOPE + D_COL +
+                       D_KURO + poly(SST,2) + G_SST + CHLA + MONTH +
+                       offset(log(perc1km_surv))+ (1|Survey),
+                     zeroInflation=F, data=tr_dens, family="nbinom")
+
+sum(resid(admb_nb, type='pearson')^2)/df.residual(admb_nb) #1.23
+cor(fitted(admb_nb), tr_dens$Density) #0.313
+summary(admb_nb)
+
+# negative binomial the way to go :)
+
+
+### check spatial autocorrelation
+library(ncf)
+spac_final <- spline.correlog(tr_dens$Longitude, tr_dens$Latitude,
+                                 residuals(admb_nb, type="pearson")[,1],
+                             xmax=200, resamp=5,latlon=TRUE)
+plot(spac_final)
+#crank up resamp
+# doesnt seem to be much SPAC
+write.csv(data.frame(
+CI_5perc=spac_final$boot$boot.summary$predicted$y[3,],
+mean=spac_final$boot$boot.summary$predicted$y[6,],
+CI_95perc=spac_final$boot$boot.summary$predicted$y[9,]),
+"~/research/miller_et_al/remodelling_2017/global_nb_SPAC.csv",
+quote=F, row.names=F)
+# seems to be fine
 
 ## global model - used to make sure model is good enough for IT inference
-gamden_global<-gamm4(Density~s(BATHY, k=5) + s(SLOPE, k=5) + s(D_COL, k=5) + COL_INF + s(D_LAND, k=5) +
-                       s(D_KURO, k=5) + s(SST, k=5) + s(G_SST, k=5) + s(CHLA, k=5) + YEAR + MONTH + offset(log(effort)),
-                     random=~(1|Location/Survey) + (1|obs), data=tr_dens, family=poisson(link=log)) 
-
-tr_dens$gam_RAC_term<-makeRAC2(mod=gamden_global,ras=rasTempl, dat=tr_dens)
-
-gamden_global_RAC<-gamm4(Density~s(BATHY, k=5) + s(SLOPE, k=5) + s(D_COL, k=5) + COL_INF + s(D_LAND, k=5) +
-                           s(D_KURO, k=5) + s(SST, k=5) + s(G_SST, k=5) + s(CHLA, k=5) + YEAR + MONTH + gam_RAC_term + offset(log(effort)),
-                         random=~(1|Location/Survey) + (1|obs), data=tr_dens, family=poisson(link=log)) 
-
-
 ## Model evaluation of global model
 
-
-#Now variance explained (r2) and  Pearson coefficient 
-library(MuMIn)
 
 ## Calculate Pseudo R squared use the function Jarred Byrners wrote.
 
@@ -654,7 +424,7 @@ summary(lmfit)$r.squared #0.08086817
 
 #confirm
 library(MuMIn)
-r.squaredGLMM(gamden_global_RAC$mer)
+r.squaredGLMM(admb_nb)
 
 cor.test(fitted(gamden_global$mer), tr_dens$Density)
 #95 percent confidence interval:
@@ -678,53 +448,7 @@ cor.test(predict(gamden_global_RAC$gam, newdata=tr_dens), tr_dens$Density)
 #  cor 
 #0.2843733 
 
-sum(resid(gamden_global$mer, type='pearson')^2)/
-  df.residual(gamden_global$mer) # gamden_global = 1.034
-sum(resid(gamden_global_RAC$mer, type='pearson')^2)/
-  df.residual(gamden_global_RAC$mer) # gamden_global_RAC = 0.891
-
-plot(gamden_global$mer, resid(., type='pearson')~fitted(.), type=c('smooth', 'p'), abline=0)
-plot(gamden_global_RAC$mer, resid(., type='pearson')~fitted(.), type=c('smooth', 'p'), abline=0)
-
-##spatial autocorrelation
-library(ncf)
-
-CorRes.gamden <- spline.correlog(tr_dens$Longitude, tr_dens$Latitude, residuals(gamden_global$mer), resamp=10,latlon=TRUE, quiet=TRUE, filter=TRUE)
-#crank up resamp
-plot(CorRes.gamden)
-
-CorRes.gamden_RAC <- spline.correlog(tr_dens$Longitude, tr_dens$Latitude, residuals(gamden_global_RAC$mer), resamp=10,latlon=TRUE, quiet=TRUE, filter=TRUE)
-#crank up resamp
-plot(CorRes.gamden_RAC)
-
-
-Cor_trial <- correlog(tr_dens$Longitude, tr_dens$Latitude, residuals(gamden_global$mer), increment=2,resamp=10,latlon=TRUE)
-Cor_trial_RAC <- correlog(tr_dens$Longitude, tr_dens$Latitude, residuals(gamden_global_RAC$mer), increment=2,resamp=10,latlon=TRUE)
-
-summary(Cor_trial$correlation)
-#     Min.    1st Qu.     Median       Mean    3rd Qu.       Max. 
-# -0.1190000 -0.0400700 -0.0002804  0.0068970  0.0329100  0.3395000 
-
-summary(Cor_trial_RAC$correlation)
-
-#     Min.    1st Qu.     Median       Mean    3rd Qu.       Max. 
-#-0.0752300 -0.0224400  0.0007324  0.0027070  0.0276500  0.1427000 
-
-ct_df<-data.frame(Distance=c(Cor_trial$mean.of.class, Cor_trial_RAC$mean.of.class),
-                  Correlation=c(Cor_trial$correlation, Cor_trial_RAC$correlation),
-                  Model=c(rep("GAMM", 177), rep("GAMM_RAC", 177)))
-
-p<-ggplot(ct_df[ct_df$Distance<300,], aes(x=Distance, y=Correlation, group=Model, colour=Model))
-p+geom_line()+geom_hline(yintercept=0)+xlab("Distance Km")+ylab("Moran's I value")+ggtitle("Spatial autocorrelation of habitat-use model")+theme_bw()
-
-##save plot for appendix
-
-png("D:/BIRDLIFE/miller_et_al/results/FIG_appendix1_habitat_use_mod_SPAC_obsRE.png", 
-    width =8, height = 4, units ="in", res =600)
-
-p+geom_line()+geom_hline(yintercept=0)+xlab("Distance Km")+ylab("Moran's I value")+ggtitle("Spatial autocorrelation of habitat-use model")+theme_bw()
-
-dev.off() # close device to save image
+plot(admb_nb, resid(., type='pearson')~fitted(.), type=c('smooth', 'p'), abline=0)
 
 
 ### NOW for individual IT models ###
