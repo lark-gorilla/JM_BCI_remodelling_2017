@@ -8,6 +8,8 @@ library(lme4)
 library(car)
 library(MASS)
 library(vegan)
+library(piecewiseSEM)
+library(ncf)
 
 boxes <- function(Values)
 {
@@ -16,6 +18,25 @@ boxes <- function(Values)
   
   for(i in 1:L) {boxplot(Values[,i], main=names(Values)[i])}
 }
+
+# extra functions for pairs multicollinearity exploration
+panel.cor <- function(x, y, digits=2, prefix="", cex.cor) 
+{
+  usr <- par("usr"); on.exit(par(usr)) 
+  par(usr = c(0, 1, 0, 1)) 
+  r <- abs(cor(x, y)) 
+  txt <- format(c(r, 0.123456789), digits=digits)[1] 
+  txt <- paste(prefix, txt, sep="") 
+  if(missing(cex.cor)) cex <- 0.8/strwidth(txt) 
+  test <- cor.test(x,y) 
+  # borrowed from printCoefmat
+  Signif <- symnum(test$p.value, corr = FALSE, na = FALSE, 
+                   cutpoints = c(0, 0.001, 0.01, 0.05, 0.1, 1),
+                   symbols = c("***", "**", "*", ".", " ")) 
+  text(0.5, 0.5, txt, cex = cex * r) 
+  text(.8, .8, Signif, cex=cex, col=2) 
+}
+
 
 #lets go!
 
@@ -43,56 +64,76 @@ jm_data$Survey<-factor(jm_data$Survey)
 
 ### Add correct effort offset as per reviewers comments
 
-trfdf<-jm_data
-trfdf$G_SST<-log(trfdf$G_SST+0.001)
-trfdf$CHLA<-log(trfdf$CHLA)
-trfdf$G_CHLA<-log(trfdf$G_CHLA)
-trfdf$BATHY<-log((trfdf$BATHY+trfdf$BATHY^2)+1)
-trfdf$SLOPE<-sqrt(trfdf$SLOPE)
-trfdf$D_KURO<-sqrt(trfdf$D_KURO)
-trfdf$D_COL<-sqrt(trfdf$D_COL)
-trfdf$D_LAND<-sqrt(trfdf$D_LAND)
 
-
-
-############~~~~~~~~~~  Modelling  ~~~~~~~~~~~#########
-############~~~~~~~~~~ *********** ~~~~~~~~~~~#########
+########## DATASET MODELLING ###########
+########################################
 
 #IZU
-
-izu_dens<-trfdf[trfdf$Location=="Izu",]
+izu_dens<-jm_data[jm_data$Location=="Izu",]
 
 # check for outliers
 
 boxes(izu_dens[,7:16])
 
 izu_dens<-izu_dens[izu_dens$SLOPE<5,]
-izu_dens<-izu_dens[izu_dens$CHLA<2.5,]
-
+#izu_dens<-izu_dens[izu_dens$CHLA<2.5,]
+izu_raw<-izu_dens
 boxes(izu_dens[,7:16])
 
 # standardize for lme4 - will need to untransform for prediction
+enviro_std<-decostand(izu_dens[,7:16], method="standardize")
+izu_dens<-data.frame(izu_dens[,1:6], enviro_std, izu_dens[,17:21])
 
-#enviro_std<-decostand(izu_dens[,7:16], method="standardize")
-#izu_dens<-data.frame(izu_dens[,1:6], enviro_std, izu_dens[,17:21])
-
+#reverse standardization
+#dcol<-decostand(izu_raw$D_COL, method="standardize")
+#head(dcol*attr(dcol, "scaled:scale")+attr(dcol, "scaled:center"))
 
 ############~~~~~~~~~~ MULTICOLLINEARITY ANALYSES ~~~~~~~~~~~#########
 ############~~~~~~~~~~ ************************** ~~~~~~~~~~~#########
 
+pairs(data.frame(izu_dens$BATHY, izu_dens$SLOPE, izu_dens$D_COL, izu_dens$COL_INF,
+                 izu_dens$D_LAND, izu_dens$D_KURO, izu_dens$SST, izu_dens$G_SST, izu_dens$CHLA,
+                 izu_dens$G_CHLA, izu_dens$YEAR, izu_dens$MONTH, izu_dens$Density), upper.panel = panel.smooth,lower.panel=panel.cor)
 
-## will remove G_CHLA from further analyses as it is a product of the original CHLA data
-# also D_LAND and COL_INF as >0.5
+#remove G_CHLA and CHLA :(, D_LAND and COL_INF
+# remember that D_KURO aned SST are 0.6 corr..
+
+#Check my if sst poly is needed?
+
+library(reshape2)
+d1<-melt(izu_dens, id.vars=c("Density", "St_date","Location", "Survey", "MONTH","DAYNIGHT", "YEAR"))
+# Very raw view of how a poly might better suit data than linear
+g1<-ggplot(data=d1, aes(y=Density, x=value))
+g1+geom_jitter(height=0.1, size=0.5)+geom_smooth(method="glm", colour=2)+
+  geom_smooth(method="glm", formula=y~poly(x,2), colour=3)+facet_wrap(~variable, scale="free")
+
+m_lin<-glm(Density~SST,
+           data=izu_dens, family="poisson")
+m_pol<-glm(Density~poly(SST,2),
+           data=izu_dens, family="poisson")
+d1<-data.frame(dens=izu_dens$Density, SST=izu_dens$SST, 
+               m_lin=predict(m_lin, new_data=izu_dens, type="response"),
+               m_pol=predict(m_pol, new_data=izu_dens, type="response"))
+g1<-ggplot(data=d1, aes(y=dens, x=SST))
+g1+geom_point()+geom_line(aes(y=m_lin, x=SST), colour=2)+  geom_line(aes(y=m_pol, x=SST), colour=3)
+anova(m_lin, m_pol)
+
+# actually poly might not be that good..
+hist(izu_dens[izu_dens$Density==0,]$SST)
+hist(izu_dens[izu_dens$Density>0,]$SST)
+
+############~~~~~~~~~~  Modelling  ~~~~~~~~~~~#########
+############~~~~~~~~~~ *********** ~~~~~~~~~~~#########
 
 hist(izu_dens$Density)
 
-izu_poi<-glmer(Density~BATHY + SLOPE + D_COL + D_KURO + poly(SST,2) +
-                 G_SST + CHLA + MONTH + YEAR+offset(log(perc1km_surv))+
+izu_poi<-glmer(Density~BATHY + SLOPE + D_COL + D_KURO + SST +
+                 G_SST + MONTH + YEAR+offset(log(perc1km_surv))+
                  (1|Survey), data=izu_dens, family=poisson(link=log))
 # sweet convereges!
 
-print(sum(resid(izu_poi, type='pearson')^2)/df.residual(izu_poi)) #15
-cor(fitted(izu_poi), izu_dens$Density) #0.382
+print(sum(resid(izu_poi, type='pearson')^2)/df.residual(izu_poi)) #9.98
+cor(fitted(izu_poi), izu_dens$Density) #0.418
 plot(izu_poi) #bad
 
 # kill big residuals (v high counts)
@@ -101,30 +142,29 @@ izu_dens[which(resid(izu_poi, type="pearson")>15),]
 izu_dens<-izu_dens[-which(resid(izu_poi, type="pearson")>15),]
 
 #refit
-izu_poi<-glmer(Density~BATHY + SLOPE + D_COL + D_KURO + poly(SST,2) +
-                 G_SST + CHLA + MONTH + YEAR+offset(log(perc1km_surv))+
+izu_poi<-glmer(Density~BATHY + SLOPE + D_COL + D_KURO + SST +
+                 G_SST + MONTH + YEAR+offset(log(perc1km_surv))+
                  (1|Survey), data=izu_dens, family=poisson(link=log))
 # sweet convereges!
 
-print(sum(resid(izu_poi, type='pearson')^2)/df.residual(izu_poi)) #4.58
-cor(fitted(izu_poi), izu_dens$Density) #0.382
+print(sum(resid(izu_poi, type='pearson')^2)/df.residual(izu_poi)) #4.95
+cor(fitted(izu_poi), izu_dens$Density) #0.29
 plot(izu_poi) #still overdisp
 
 # Use negative binomial
 
-izu_nb<-glmer.nb(Density~BATHY + SLOPE + D_COL + D_KURO + poly(SST,2) +
-                   G_SST + CHLA + MONTH + YEAR+offset(log(perc1km_surv))+
+izu_nb<-glmer.nb(Density~BATHY + SLOPE + D_COL + D_KURO + SST +
+                   G_SST + MONTH + YEAR+offset(log(perc1km_surv))+
                    (1|Survey), data=izu_dens) 
 # does not converge
 print(sum(resid(izu_nb, type='pearson')^2)/df.residual(izu_nb)) #0.93
-cor(fitted(izu_nb), izu_dens$Density) #31
+cor(fitted(izu_nb), izu_dens$Density) #0.4
 plot(izu_nb) #ok
 
 #try glmmadmb
 library(glmmADMB)
-# D_LAND and COL_INF dropped cos theyre crap and collinear
-izu_nb2<-glmmadmb(Density~BATHY + SLOPE + D_COL + D_KURO + poly(SST,2) +
-                    G_SST + CHLA + MONTH + YEAR + offset(log(perc1km_surv))+
+izu_nb2<-glmmadmb(Density~BATHY + SLOPE + D_COL + D_KURO + SST +
+                    G_SST + MONTH + YEAR + offset(log(perc1km_surv))+
                      (1|Survey), zeroInflation=F,
                    data=izu_dens, family="nbinom")
 
@@ -149,54 +189,96 @@ izu_nb4<-glmer.nb(Density~ D_COL +YEAR+ MONTH+offset(log(perc1km_surv))+
 
 izu_nb3a<-glmer.nb(Density~ D_COL * MONTH+offset(log(perc1km_surv))+
                     (1|Survey), data=izu_dens) 
+izu_nb3b<-glmer.nb(Density~ D_COL : MONTH+offset(log(perc1km_surv))+
+                     (1|Survey), data=izu_dens) 
+izu_nb2a<-glmer.nb(Density~ D_COL * YEAR+offset(log(perc1km_surv))+
+                     (1|Survey), data=izu_dens) 
 
-anova(izu_nb1, izu_nb2, izu_nb3, izu_nb3a, izu_nb4) # ok month best (izu_nb3)
+anova(izu_nb1, izu_nb2, izu_nb2a, izu_nb3, izu_nb3a, izu_nb4) # ok month best (izu_nb3)
+
+# evidence for month and month:D_col interaction, not year
+Anova(izu_nb2)
+Anova(izu_nb2a)
+
+# check if interaction is doing what I think it is
+
+# reverse standardization
+dcol<-decostand(izu_raw$D_COL, method="standardize")
+# (x - mean(x)) / sd(x)
+
+D_COL_std<-(((1:50)-attr(dcol, "scaled:center"))/attr(dcol, "scaled:scale"))
+
+new_dat<-rbind(data.frame(D_COL=D_COL_std, MONTH='04', perc1km_surv=50),
+               data.frame(D_COL=D_COL_std, MONTH='05', perc1km_surv=50))
+
+p1<-predict(izu_nb3, newdata=new_dat, type="response", re.form=~0)
+p2<-predict(izu_nb3a, newdata=new_dat, type="response", re.form=~0)
+p3<-predict(izu_nb3b, newdata=new_dat, type="response", re.form=~0)
 
 
-izu_nb5<-glmer.nb(Density~ D_COL + MONTH+ BATHY+offset(log(perc1km_surv))+
+out<-rbind(data.frame(new_dat, mod="non_intr", pred=p1),
+              data.frame(new_dat, mod="intr", pred=p2),
+              data.frame(new_dat, mod="intr_only", pred=p3))
+
+qplot(data=out, x=D_COL, y=pred, colour=MONTH, linetype=mod, geom="line")
+
+
+add1(izu_nb3a,scope= ~D_COL*MONTH +BATHY + SLOPE + D_KURO + SST +G_SST,
+     test="Chisq")
+
+izu_nb5<-glmer.nb(Density~ D_COL *MONTH+ BATHY+offset(log(perc1km_surv))+
                     (1|Survey), data=izu_dens)
-izu_nb6<-glmer.nb(Density~ D_COL + MONTH+ SLOPE+offset(log(perc1km_surv))+
+izu_nb6<-glmer.nb(Density~ D_COL * MONTH+ SLOPE+offset(log(perc1km_surv))+
                     (1|Survey), data=izu_dens)
-izu_nb7<-glmer.nb(Density~ D_COL + MONTH+ D_KURO+offset(log(perc1km_surv))+
+izu_nb7<-glmer.nb(Density~ D_COL * MONTH+ D_KURO+offset(log(perc1km_surv))+
                     (1|Survey), data=izu_dens)
-izu_nb8<-glmer.nb(Density~ D_COL + MONTH+ poly(SST,2)+offset(log(perc1km_surv))+
+izu_nb8<-glmer.nb(Density~ D_COL * MONTH+ SST+offset(log(perc1km_surv))+
                     (1|Survey), data=izu_dens)
-izu_nb9<-glmer.nb(Density~ D_COL + MONTH+ G_SST+offset(log(perc1km_surv))+
-                    (1|Survey), data=izu_dens)
-izu_nb10<-glmer.nb(Density~ D_COL + MONTH+ CHLA+offset(log(perc1km_surv))+
+izu_nb9<-glmer.nb(Density~ D_COL * MONTH+ G_SST+offset(log(perc1km_surv))+
                     (1|Survey), data=izu_dens)
 
 
-anova(izu_nb3, izu_nb5, izu_nb6, izu_nb7, izu_nb8, izu_nb9, izu_nb10) # poly(SST) izu_nb8 best
+anova(izu_nb3a, izu_nb5, izu_nb6, izu_nb7, izu_nb8, izu_nb9) # poly(SST) izu_nb8 best
 
-izu_nb11<-glmer.nb(Density~ D_COL + MONTH+ poly(SST,2)+ BATHY+offset(log(perc1km_surv))+
+izu_nb11<-glmer.nb(Density~ D_COL * MONTH+ poly(SST,2)+ BATHY+offset(log(perc1km_surv))+
                     (1|Survey), data=izu_dens)
-izu_nb12<-glmer.nb(Density~ D_COL + MONTH+ poly(SST,2)+ SLOPE+offset(log(perc1km_surv))+
+izu_nb12<-glmer.nb(Density~ D_COL * MONTH+ poly(SST,2)+ SLOPE+offset(log(perc1km_surv))+
                      (1|Survey), data=izu_dens)
-izu_nb13<-glmer.nb(Density~ D_COL + MONTH+ poly(SST,2)+ G_SST+offset(log(perc1km_surv))+
+izu_nb13<-glmer.nb(Density~ D_COL * MONTH+ poly(SST,2)+ G_SST+offset(log(perc1km_surv))+
                      (1|Survey), data=izu_dens)
-izu_nb14<-glmer.nb(Density~ D_COL + MONTH+ poly(SST,2)+ D_KURO+offset(log(perc1km_surv))+
-                     (1|Survey), data=izu_dens)
-izu_nb15<-glmer.nb(Density~ D_COL + MONTH+ poly(SST,2)+ CHLA+offset(log(perc1km_surv))+
+izu_nb14<-glmer.nb(Density~ D_COL * MONTH+ poly(SST,2)+ D_KURO+offset(log(perc1km_surv))+
                      (1|Survey), data=izu_dens)
 
-anova(izu_nb8, izu_nb11, izu_nb12, izu_nb13, izu_nb14, izu_nb15) # slope izu_nb12 best
+anova(izu_nb8, izu_nb11, izu_nb12, izu_nb13, izu_nb14) # slope izu_nb12 best
 
-izu_nb16<-glmer.nb(Density~ D_COL + MONTH+ poly(SST,2)+ SLOPE+G_SST+offset(log(perc1km_surv))+
-                     (1|Survey), data=izu_dens)
-# only combo worth testing 
+# not trying adding D_kuro as its corr with SST
 
-anova(izu_nb12, izu_nb16)
+anova(izu_nb12) # final mod
 
-drop1(izu_nb16, test="Chisq") #make sure we cant get rid of one
+drop1(izu_nb12, test="Chisq") #make sure we cant get rid of one
 
-print(sum(resid(izu_nb16, type='pearson')^2)/df.residual(izu_nb16)) # 0.91
-library(piecewiseSEM)
-sem.model.fits(izu_nb16)
+print(sum(resid(izu_nb12, type='pearson')^2)/
+        df.residual(izu_nb12)) # 1.01
+
+sem.model.fits(izu_nb12)
 #     Class            Family Link    n  Marginal Conditional
 #1 glmerMod Negative Binomial  log 2981 0.6363992    0.671492
-summary(izu_nb16)
+summary(izu_nb12)
 
+# test spatial autocorrelation
+
+spac_izu <- spline.correlog(izu_dens$Longitude, izu_dens$Latitude,
+                              residuals(izu_nb12, type="pearson"),
+                              xmax=250, resamp=5,latlon=TRUE)
+plot(spac_izu)
+
+# doesnt seem to be much SPAC
+write.csv(data.frame(
+  CI_5perc=spac_izu$boot$boot.summary$predicted$y[3,],
+  mean=spac_izu$boot$boot.summary$predicted$y[6,],
+  CI_95perc=spac_izu$boot$boot.summary$predicted$y[9,]),
+  "~/research/miller_et_al/remodelling_2017/izu_SPAC.csv",
+  quote=F, row.names=F)
 #######################################################
 
 #BIRO
