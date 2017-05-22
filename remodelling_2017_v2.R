@@ -222,23 +222,38 @@ out<-rbind(data.frame(new_dat, mod="non_intr", pred=p1),
 
 qplot(data=out, x=D_COL, y=pred, colour=MONTH, linetype=mod, geom="line")
 
+# also
+ggplot(data=izu_raw[izu_raw$Density<20,], aes(y=Density, x=D_COL))+
+  +   geom_jitter( aes(y=Density, colour=MONTH), width=0, height=1)
 
 add1(izu_nb3a,scope= ~D_COL*MONTH +BATHY + SLOPE + D_KURO + SST +G_SST,
      test="Chisq")
+# evidence for G_SST and Slope
+# lets investigate
 
-izu_nb5<-glmer.nb(Density~ D_COL *MONTH+ BATHY+offset(log(perc1km_surv))+
-                    (1|Survey), data=izu_dens)
-izu_nb6<-glmer.nb(Density~ D_COL * MONTH+ SLOPE+offset(log(perc1km_surv))+
-                    (1|Survey), data=izu_dens)
-izu_nb7<-glmer.nb(Density~ D_COL * MONTH+ D_KURO+offset(log(perc1km_surv))+
-                    (1|Survey), data=izu_dens)
-izu_nb8<-glmer.nb(Density~ D_COL * MONTH+ SST+offset(log(perc1km_surv))+
-                    (1|Survey), data=izu_dens)
-izu_nb9<-glmer.nb(Density~ D_COL * MONTH+ G_SST+offset(log(perc1km_surv))+
-                    (1|Survey), data=izu_dens)
+qplot(data=izu_raw[izu_raw$G_SST<1,], y=Density, x=G_SST,
+      geom="point")+geom_smooth(method="glm")+
+  geom_jitter(width=0, height=1) # outliers could be contributing to the pattern..
 
+ggplot(data=izu_raw, aes(y=Density, x=G_SST))+
+  geom_density(data=izu_raw[izu_raw$Density<1,],
+               aes(x=G_SST, (..scaled..)))+
+  geom_density(data=izu_raw[izu_raw$Density>0,],
+               aes(x=G_SST, (..scaled..)/2, colour=2))
+# not overly pschyed with G_SST
 
-anova(izu_nb3a, izu_nb5, izu_nb6, izu_nb7, izu_nb8, izu_nb9) # poly(SST) izu_nb8 best
+ggplot(data=izu_raw, aes(y=Density, x=SLOPE))+
+  geom_density(data=izu_raw[izu_raw$Density<1,],
+               aes(x=SLOPE, (..scaled..)))+
+  geom_density(data=izu_raw[izu_raw$Density>0,],
+               aes(x=SLOPE, (..scaled..)/2, colour=2))+
+  geom_point(data=izu_raw[izu_raw$Density>0,], aes(y=Density/90))
+# not overly pschyed with G_SST
+  # not overly pschyed with Slope either
+
+anova(izu_nb3a, izu_nb5) # poly(SST) izu_nb8 best
+
+qplot(data=izu_dens, y=Density, x=G_SST, geom="point")+geom_smooth(method="glm")
 
 izu_nb11<-glmer.nb(Density~ D_COL * MONTH+ poly(SST,2)+ BATHY+offset(log(perc1km_surv))+
                     (1|Survey), data=izu_dens)
