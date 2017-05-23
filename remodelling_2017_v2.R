@@ -251,7 +251,19 @@ ggplot(data=izu_raw, aes(y=Density, x=SLOPE))+
 # not overly pschyed with G_SST
   # not overly pschyed with Slope either
 
-anova(izu_nb3a, izu_nb5) # poly(SST) izu_nb8 best
+# test difference between colony model and full oceanographic model
+
+izu_nb3a<-glmer.nb(Density~ D_COL * MONTH+offset(log(perc1km_surv))+
+                     (1|Survey), data=izu_dens) 
+
+izu_nb5<-glmer.nb(Density~ D_COL * MONTH+ G_SST + SLOPE+offset(log(perc1km_surv))+
+                     (1|Survey), data=izu_dens) 
+
+anova(izu_nb3a, izu_nb5)
+sem.model.fits(izu_nb3a)
+sem.model.fits(izu_nb5)
+
+
 
 qplot(data=izu_dens, y=Density, x=G_SST, geom="point")+geom_smooth(method="glm")
 
