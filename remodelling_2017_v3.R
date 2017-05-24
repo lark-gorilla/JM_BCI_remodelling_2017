@@ -536,6 +536,27 @@ write.csv(data.frame(
   "~/research/miller_et_al/remodelling_2017/_col__year_month_bir_SPAC.csv",
   quote=F, row.names=F)
 
+# test ZIP out of interest
+library(pscl)
+f1<-formula(Density~ D_COL +YEAR+ MONTH+
+                   offset(log(perc1km_surv))) 
+zip1<-zeroinfl(f1, dist="poisson", link="logit", data=bir_dens)
+print(sum(resid(zip1, type='pearson')^2)/
+        df.residual(zip1)) 
+zinb1<-zeroinfl(f1, dist="negbin", link="logit", data=bir_dens)
+print(sum(resid(zinb1, type='pearson')^2)/
+        df.residual(zinb1)) 
+# zinb1 better
+
+cor(fitted(bir_glm1), bir_dens$Density) 
+# 0.4451304
+cor(fitted(zip1), bir_dens$Density) 
+#0.4463856
+cor(fitted(zinb1), bir_dens$Density) 
+#0.4292516
+
+#No advantage of zero inflation
+
 ########## Invidual dataset MODELLING ###########
 ########################################
 
@@ -704,8 +725,155 @@ izu_p8b<-glmer(Density~ D_LAND+CHLA+YEAR+offset(log(perc1km_surv))+
 anova(izu_p8, izu_p8a)
 anova(izu_p8, izu_p8b)
 
+# try G_SST but it is 0.49 corr with D_LAND and has outliers
+
+izu_p8c<-glmer(Density~ D_LAND+CHLA+G_SST+offset(log(perc1km_surv))+
+                 (1|Survey), data=izu_dens, family=poisson)
+
+anova(izu_p8, izu_p8c) # nope
+
+# final mod
+
+summary(izu_p8)
+
+Anova(izu_p8) # final mod
+
+print(sum(resid(izu_p8, type='pearson')^2)/
+        df.residual(izu_p8)) 
+
+sem.model.fits(izu_p8)
+cor(fitted(izu_p8), izu_dens$Density)
 
 
 
+# test spatial autocorrelation
+
+spac_for <- spline.correlog(izu_dens$Longitude, izu_dens$Latitude,
+                            residuals(izu_p8, type="pearson"),
+                            xmax=60, resamp=10,latlon=TRUE)
+plot(spac_for)
+# doesnt seem to be much SPAC at all 
+write.csv(data.frame(
+  CI_5perc=spac_for$boot$boot.summary$predicted$y[3,],
+  mean=spac_for$boot$boot.summary$predicted$y[6,],
+  CI_95perc=spac_for$boot$boot.summary$predicted$y[9,]),
+  "~/research/miller_et_al/remodelling_2017/_Izu_forage_SPAC.csv",
+  quote=F, row.names=F)
+
+#######################################################
+# prediction of Colony models to validate themselves and one another #
+#######################################################
+
+# make sure I've remade izu col models not the foraging model!
+#izu_nb3a vs bir_glm1
+
+# izu upon itself (train) FYI I did the same model with glmmadmb (zeroinflation=T) and got no difference from lme4
+
+izu_dens$pred<-predict(izu_nb3a, newdata=izu_dens, type="response", re.form=~0)
+
+cory<-cor(izu_dens$pred, izu_dens$Density) # 0.323 
+plot(izu_dens$pred, izu_dens$Density) 
+
+source("lmodel2.R")
+# from Oppel et al 2012
+caltest<-lmodel2(log(izu_dens$Density+0.000001)~log(izu_dens$pred), nperm=100)			
+### regression is performed on log-transformed data, requiring a small addition to avoid -inf when data=0
+
+izu_train=data.frame(test="izu_2_izu", cor=cory, rsq=caltest$rsquare, slope=
+caltest$regression.results[2,3], intercept=
+caltest$regression.results$Intercept[2])
+
+# Izu to biro
+
+# reverse standardization
+dcol<-decostand(izu_raw$D_COL, method="standardize")
+# (x - mean(x)) / sd(x)
+D_COL_std<-(((bir_dens$D_COL)-attr(dcol, "scaled:center"))/attr(dcol, "scaled:scale"))
+
+new_dat<-data.frame(D_COL=D_COL_std, D_COLraw=bir_dens$D_COL,
+                    MONTH='04', Density=bir_dens$Density, 
+                    perc1km_surv=50)
+
+new_dat$pred<-predict(izu_nb3a, newdata=new_dat, type="response", re.form=~0)
+
+cory<-cor(new_dat$pred, new_dat$Density) #not horrific 0.226
+plot(new_dat$pred, new_dat$Density) 
+
+caltest<-lmodel2(log(new_dat$Density+0.000001)~log(new_dat$pred), nperm=100)			
+
+izu_test=data.frame(test="izu_2_biro", cor=cory, rsq=caltest$rsquare, slope=
+                       caltest$regression.results[2,3], intercept=
+                       caltest$regression.results$Intercept[2])
+
+# biro to itslef (train)
+
+bir_dens$pred<-predict(bir_glm1, newdata=bir_dens, type="response", re.form=~0)
+
+cory<-cor(bir_dens$pred, bir_dens$Density) # 0.445
+plot(bir_dens$pred, bir_dens$Density) 
+
+caltest<-lmodel2(log(bir_dens$Density+0.000001)~log(bir_dens$pred), nperm=100)			
+caltest$rsquare
+caltest$regression.results[2,3]
+caltest$regression.results$Intercept[2]
+
+biro_train=data.frame(test="biro_2_biro", cor=cory, rsq=caltest$rsquare, slope=
+                      caltest$regression.results[2,3], intercept=
+                      caltest$regression.results$Intercept[2])
 
 
+# biro to Izu
+
+# reverse standardization
+dcol<-decostand(bir_raw$D_COL, method="standardize")
+# (x - mean(x)) / sd(x)
+D_COL_std<-(((izu_dens$D_COL)-attr(dcol, "scaled:center"))/attr(dcol, "scaled:scale"))
+
+new_dat2<-data.frame(D_COL=D_COL_std, D_COLraw=izu_dens$D_COL,
+                    MONTH='04', YEAR="2009", Density=izu_dens$Density, 
+                    perc1km_surv=50)
+
+new_dat2$pred<-predict(bir_glm1, newdata=new_dat2, type="response")
+
+cory<-cor(new_dat2$pred, new_dat2$Density)
+plot(new_dat2$pred, new_dat2$Density) #hmm 0.11
+
+caltest<-lmodel2(log(new_dat2$Density+0.000001)~log(new_dat2$pred), nperm=100)			
+caltest$rsquare
+caltest$regression.results[2,3]
+caltest$regression.results$Intercept[2]
+
+biro_test=data.frame(test="biro_2_izu", cor=cory, rsq=caltest$rsquare, slope=
+                        caltest$regression.results[2,3], intercept=
+                        caltest$regression.results$Intercept[2])
+
+out<-rbind(izu_train, izu_test, biro_train, biro_test)
+
+# see how close a plot is
+
+# izu 
+
+dcol<-decostand(izu_raw$D_COL, method="standardize")
+D_COL_std<-(((1:50)-attr(dcol, "scaled:center"))/attr(dcol, "scaled:scale"))
+
+p_izu<-rbind(data.frame(D_COL=D_COL_std, D_COLraw=1:50,MONTH='04', YEAR="2009", perc1km_surv=50, dset="IZU"),
+             data.frame(D_COL=D_COL_std, D_COLraw=1:50,MONTH='05', YEAR="2009", perc1km_surv=50, dset="IZU"))
+
+p_izu$pred<-predict(izu_nb3a, newdata=p_izu,
+                    type="response", re.form=~0)
+
+# biro 
+dcol<-decostand(bir_raw$D_COL, method="standardize")
+D_COL_std<-(((1:50)-attr(dcol, "scaled:center"))/attr(dcol, "scaled:scale"))
+
+p_bir<-rbind(data.frame(D_COL=D_COL_std, D_COLraw=1:50,MONTH='03', YEAR="2009", perc1km_surv=50, dset="BIRO"),
+             data.frame(D_COL=D_COL_std, D_COLraw=1:50,MONTH='04', YEAR="2009", perc1km_surv=50, dset="BIRO"))
+
+p_bir$pred<-predict(bir_glm1, newdata=p_bir,
+                    type="response")
+
+out<-rbind(p_izu, p_bir)
+
+qplot(data=out, x=D_COLraw, y=pred, colour=dset, linetype=MONTH, geom="line")
+
+# ok
