@@ -779,7 +779,9 @@ source("lmodel2.R")
 caltest<-lmodel2(log(izu_dens$Density+0.000001)~log(izu_dens$pred), nperm=100)			
 ### regression is performed on log-transformed data, requiring a small addition to avoid -inf when data=0
 
-izu_train=data.frame(test="izu_2_izu", cor=cory, rsq=caltest$rsquare, slope=
+spr=cor.test(izu_dens$pred, izu_dens$Density, method="spearman")$estimate
+
+izu_train=data.frame(test="izu_2_izu", cor=cory, rho=spr, rsq=caltest$rsquare, slope=
 caltest$regression.results[2,3], intercept=
 caltest$regression.results$Intercept[2])
 
@@ -788,10 +790,10 @@ caltest$regression.results$Intercept[2])
 # reverse standardization
 dcol<-decostand(izu_raw$D_COL, method="standardize")
 # (x - mean(x)) / sd(x)
-D_COL_std<-(((bir_dens$D_COL)-attr(dcol, "scaled:center"))/attr(dcol, "scaled:scale"))
+D_COL_std<-(((bir_dens[bir_dens$YEAR=="2008",]$D_COL)-attr(dcol, "scaled:center"))/attr(dcol, "scaled:scale"))
 
-new_dat<-data.frame(D_COL=D_COL_std, D_COLraw=bir_dens$D_COL,
-                    MONTH='04', Density=bir_dens$Density, 
+new_dat<-data.frame(D_COL=D_COL_std,
+                    MONTH='04', Density=bir_dens[bir_dens$YEAR=="2008",]$Density, 
                     perc1km_surv=50)
 
 new_dat$pred<-predict(izu_nb3a, newdata=new_dat, type="response", re.form=~0)
@@ -801,9 +803,59 @@ plot(new_dat$pred, new_dat$Density)
 
 caltest<-lmodel2(log(new_dat$Density+0.000001)~log(new_dat$pred), nperm=100)			
 
-izu_test=data.frame(test="izu_2_biro", cor=cory, rsq=caltest$rsquare, slope=
+spr=cor.test(new_dat$pred, new_dat$Density, method="spearman")$estimate
+
+izu_test2008=data.frame(test="izu_2_biro_2008", cor=cory, rho=spr, rsq=caltest$rsquare, slope=
                        caltest$regression.results[2,3], intercept=
                        caltest$regression.results$Intercept[2])
+
+#2009
+# reverse standardization
+dcol<-decostand(izu_raw$D_COL, method="standardize")
+# (x - mean(x)) / sd(x)
+D_COL_std<-(((bir_dens[bir_dens$YEAR=="2009",]$D_COL)-attr(dcol, "scaled:center"))/attr(dcol, "scaled:scale"))
+
+new_dat<-data.frame(D_COL=D_COL_std,
+                    MONTH='04', Density=bir_dens[bir_dens$YEAR=="2009",]$Density, 
+                    perc1km_surv=50)
+
+new_dat$pred<-predict(izu_nb3a, newdata=new_dat, type="response", re.form=~0)
+
+cory<-cor(new_dat$pred, new_dat$Density) #not horrific 0.226
+plot(new_dat$pred, new_dat$Density) 
+
+caltest<-lmodel2(log(new_dat$Density+0.000001)~log(new_dat$pred), nperm=100)			
+
+spr=cor.test(new_dat$pred, new_dat$Density, method="spearman")$estimate
+
+izu_test2009=data.frame(test="izu_2_biro_2009", cor=cory, rho=spr, rsq=caltest$rsquare, slope=
+                      caltest$regression.results[2,3], intercept=
+                      caltest$regression.results$Intercept[2])
+
+#2012
+# reverse standardization
+dcol<-decostand(izu_raw$D_COL, method="standardize")
+# (x - mean(x)) / sd(x)
+D_COL_std<-(((bir_dens[bir_dens$YEAR=="2012",]$D_COL)-attr(dcol, "scaled:center"))/attr(dcol, "scaled:scale"))
+
+new_dat<-data.frame(D_COL=D_COL_std,
+                    MONTH='04', Density=bir_dens[bir_dens$YEAR=="2012",]$Density, 
+                    perc1km_surv=50)
+
+new_dat$pred<-predict(izu_nb3a, newdata=new_dat, type="response", re.form=~0)
+
+cory<-cor(new_dat$pred, new_dat$Density) #not horrific 0.226
+plot(new_dat$pred, new_dat$Density) 
+
+caltest<-lmodel2(log(new_dat$Density+0.000001)~log(new_dat$pred), nperm=100)			
+
+spr=cor.test(new_dat$pred, new_dat$Density, method="spearman")$estimate
+
+izu_test2012=data.frame(test="izu_2_biro_2012", rho=spr, cor=cory, rsq=caltest$rsquare, slope=
+                          caltest$regression.results[2,3], intercept=
+                          caltest$regression.results$Intercept[2])
+
+
 
 # biro to itslef (train)
 
@@ -817,20 +869,25 @@ caltest$rsquare
 caltest$regression.results[2,3]
 caltest$regression.results$Intercept[2]
 
-biro_train=data.frame(test="biro_2_biro", cor=cory, rsq=caltest$rsquare, slope=
+spr=cor.test(bir_dens$pred, bir_dens$Density, method="spearman")$estimate
+
+biro_train=data.frame(test="biro_2_biro", cor=cory, rho=spr,rsq=caltest$rsquare, slope=
                       caltest$regression.results[2,3], intercept=
                       caltest$regression.results$Intercept[2])
 
 
 # biro to Izu
 
+# we know that izu changes by month from izu model, but not year so select only April
+# points from all years to test biro prediction
+
 # reverse standardization
 dcol<-decostand(bir_raw$D_COL, method="standardize")
 # (x - mean(x)) / sd(x)
-D_COL_std<-(((izu_dens$D_COL)-attr(dcol, "scaled:center"))/attr(dcol, "scaled:scale"))
+D_COL_std<-(((izu_dens[izu_dens$YEAR=="2010",]$D_COL)-attr(dcol, "scaled:center"))/attr(dcol, "scaled:scale"))
 
-new_dat2<-data.frame(D_COL=D_COL_std, D_COLraw=izu_dens$D_COL,
-                    MONTH='04', YEAR="2009", Density=izu_dens$Density, 
+new_dat2<-data.frame(D_COL=D_COL_std, 
+                    MONTH='04', YEAR="2009", Density=izu_dens[izu_dens$YEAR=="2010",]$Density, 
                     perc1km_surv=50)
 
 new_dat2$pred<-predict(bir_glm1, newdata=new_dat2, type="response")
@@ -843,11 +900,41 @@ caltest$rsquare
 caltest$regression.results[2,3]
 caltest$regression.results$Intercept[2]
 
-biro_test=data.frame(test="biro_2_izu", cor=cory, rsq=caltest$rsquare, slope=
+spr=cor.test(new_dat2$pred, new_dat2$Density, method="spearman")$estimate
+
+biro_test2010=data.frame(test="biro_2_izu_2010", cor=cory, rho=spr, rsq=caltest$rsquare, slope=
                         caltest$regression.results[2,3], intercept=
                         caltest$regression.results$Intercept[2])
 
-out<-rbind(izu_train, izu_test, biro_train, biro_test)
+# 2011
+
+dcol<-decostand(bir_raw$D_COL, method="standardize")
+# (x - mean(x)) / sd(x)
+D_COL_std<-(((izu_dens[izu_dens$YEAR=="2011",]$D_COL)-attr(dcol, "scaled:center"))/attr(dcol, "scaled:scale"))
+
+new_dat2<-data.frame(D_COL=D_COL_std, 
+                     MONTH='04', YEAR="2009", Density=izu_dens[izu_dens$YEAR=="2011",]$Density, 
+                     perc1km_surv=50)
+
+new_dat2$pred<-predict(bir_glm1, newdata=new_dat2, type="response")
+
+cory<-cor(new_dat2$pred, new_dat2$Density)
+plot(new_dat2$pred, new_dat2$Density) #hmm 0.11
+
+caltest<-lmodel2(log(new_dat2$Density+0.000001)~log(new_dat2$pred), nperm=100)			
+caltest$rsquare
+caltest$regression.results[2,3]
+caltest$regression.results$Intercept[2]
+
+spr=cor.test(new_dat2$pred, new_dat2$Density, method="spearman")$estimate
+
+
+biro_test2011=data.frame(test="biro_2_izu_2011", cor=cory, rho=spr, rsq=caltest$rsquare, slope=
+                           caltest$regression.results[2,3], intercept=
+                           caltest$regression.results$Intercept[2])
+
+out<-rbind(izu_train, izu_test2008, izu_test2009, izu_test2012,
+           biro_train, biro_test2010, biro_test2011)
 
 # see how close a plot is
 
@@ -856,23 +943,104 @@ out<-rbind(izu_train, izu_test, biro_train, biro_test)
 dcol<-decostand(izu_raw$D_COL, method="standardize")
 D_COL_std<-(((1:50)-attr(dcol, "scaled:center"))/attr(dcol, "scaled:scale"))
 
-p_izu<-rbind(data.frame(D_COL=D_COL_std, D_COLraw=1:50,MONTH='04', YEAR="2009", perc1km_surv=50, dset="IZU"),
-             data.frame(D_COL=D_COL_std, D_COLraw=1:50,MONTH='05', YEAR="2009", perc1km_surv=50, dset="IZU"))
+p_izu<-rbind(data.frame(Density=1, D_COL=D_COL_std, D_COLraw=1:50,MONTH='04', YEAR="2009", perc1km_surv=50, dset="IZU"),
+             data.frame(Density=1,D_COL=D_COL_std, D_COLraw=1:50,MONTH='05', YEAR="2009", perc1km_surv=50, dset="IZU"))
 
 p_izu$pred<-predict(izu_nb3a, newdata=p_izu,
-                    type="response", re.form=~0)
+                    type="link", re.form=~0)
+
+predmat <- model.matrix(terms(izu_nb3a), data=p_izu) # need to put terms arguement not just model, RE carried over otherwise?
+vcv <- vcov(izu_nb3a)
+## then calculate the standard errors
+semod <-  sqrt(diag(predmat%*%vcv%*%t(predmat))) #M: creates matrix and takes the diagonal
+# then we can get the confidence intervals @ 95% confidence level
+p_izu$ucl <- p_izu$pred + semod*1.96
+p_izu$lcl <- p_izu$pred - semod*1.96
 
 # biro 
 dcol<-decostand(bir_raw$D_COL, method="standardize")
 D_COL_std<-(((1:50)-attr(dcol, "scaled:center"))/attr(dcol, "scaled:scale"))
 
-p_bir<-rbind(data.frame(D_COL=D_COL_std, D_COLraw=1:50,MONTH='03', YEAR="2009", perc1km_surv=50, dset="BIRO"),
-             data.frame(D_COL=D_COL_std, D_COLraw=1:50,MONTH='04', YEAR="2009", perc1km_surv=50, dset="BIRO"))
+p_bir<-rbind(data.frame(Density=1,D_COL=D_COL_std, D_COLraw=1:50,MONTH='03', YEAR="2009", perc1km_surv=50, dset="BIRO"),
+             data.frame(Density=1,D_COL=D_COL_std, D_COLraw=1:50,MONTH='04', YEAR="2009", perc1km_surv=50, dset="BIRO"))
 
-p_bir$pred<-predict(bir_glm1, newdata=p_bir,
-                    type="response")
+p1<-predict(bir_glm1, newdata=p_bir,
+                    type="link", se=T)
+
+p_bir$pred<-p1$fit
+p_bir$ucl<-p1$fit + p1$se.fit*1.96
+p_bir$lcl<-p1$fit - p1$se.fit*1.96
 
 out<-rbind(p_izu, p_bir)
+
+levels(out$MONTH)
+out$MONTH<-relevel(out$MONTH, ref="03")
+
+out$Density_response_pred<-exp(out$pred)
+out[out$Density_response_pred<0.5,] # see min dist that has this dens
+
+p1<-ggplot(data=out, aes(colour=dset, linetype=MONTH))+
+  
+  scale_y_continuous(breaks=c(0,0.5, 2,4,6,8, 10), limits=c(0,10))+
+
+  geom_segment(aes(x=30, y=0.5, xend=30, yend=5), colour="grey", linetype=1, size=0.5)+
+  geom_text(aes(x=33,y=5,label="Izu May \n 30 km"),size=5, colour=1)+
+  
+  geom_segment(aes(x=37, y=0.5, xend=37, yend=3), colour="grey", linetype=1, size=0.5)+
+  geom_text(aes(x=40,y=3,label="Izu Apr \n 37 km"), size=5, colour=1)+
+  
+  geom_segment(aes(x=11, y=0.5, xend=11, yend=6), colour="grey", linetype=1, size=0.5)+
+  geom_text(aes(x=14,y=6,label="Biro Apr \n 11 km"), size=5, colour=1)+
+  
+  geom_segment(aes(x=8, y=0.5, xend=8, yend=8), colour="grey", linetype=1, size=0.5)+
+  geom_text(aes(x=11,y=8,label="Biro Mar \n 8 km"), size=5, colour=1)+
+  
+  geom_hline(yintercept=0.5, colour="grey")+
+  
+  geom_line(aes(x=D_COLraw, y=exp(pred)),size=1)+
+  ylab(expression("Japanese murrelet density"~(birds~"/"~km^{2})))+ 
+  xlab("Distance to colony (km)")+
+  theme_classic()+
+  theme(legend.position=0, axis.text=element_text(size=12),
+                        axis.title=element_text(size=14))
+
+jpeg("~/research/miller_et_al/remodelling_2017/col_dist_cutoff_plot.jpg",
+     width = 6, height =6 , units ="in", res =300)
+#A4 size
+p1
+dev.off()
+
+
+
+out$textanno<-"March"
+out[out$MONTH=="04",]$textanno<-"April"
+out[out$MONTH=="05",]$textanno<-"May"
+out$txt_y<-2
+out[out$MONTH=="04",]$txt_y<- 4
+out[out$MONTH=="05",]$txt_y<- 15
+out$txt_x<-45
+
+p1<-ggplot(data=out, aes(fill=dset))+
+  geom_vline(xintercept = c(10, 20, 30, 40), colour="grey")+
+  geom_hline(yintercept = c(0), colour="grey")+
+  geom_ribbon(aes(x=D_COLraw, ymin=exp(lcl), ymax=exp(ucl)), alpha=0.5)+
+  geom_line(aes(x=D_COLraw, y=exp(pred)),size=1)+
+  ylab(expression("Japanese murrelet density"~(birds~"/"~km^{2})))+ 
+  xlab("Distance to colony (km)")+
+  theme_classic()+facet_grid(MONTH~., scales="free_y")+
+  theme(strip.background = element_blank(),
+        strip.text.y = element_blank())+
+ geom_text(aes(x=txt_x,y=txt_y,label=textanno), size=7)+
+theme(legend.position=0, axis.text=element_text(size=12),
+      axis.title=element_text(size=14))
+
+jpeg("~/research/miller_et_al/remodelling_2017/col_dist_plots2.jpg",
+     width = 6, height =6 , units ="in", res =300)
+#A4 size
+p1
+dev.off()
+
+
 
 qplot(data=out, x=D_COLraw, y=pred, colour=dset, linetype=MONTH, geom="line")
 
