@@ -977,7 +977,20 @@ levels(out$MONTH)
 out$MONTH<-relevel(out$MONTH, ref="03")
 
 out$Density_response_pred<-exp(out$pred)
+
+#Find cutoff distance using 0.5 birds per km2 density limit
 out[out$Density_response_pred<0.5,] # see min dist that has this dens
+
+# okay cool
+#just check same cutoff if we used crazy 2012 biro data
+
+p_bir<-rbind(data.frame(D_COL=D_COL_std, D_COLraw=1:50,MONTH='03', YEAR="2008", perc1km_surv=50, dset="BIRO"),
+             data.frame(D_COL=D_COL_std, D_COLraw=1:50,MONTH='04', YEAR="2008", perc1km_surv=50, dset="BIRO"))
+p_bir$p1<-predict(bir_glm1, newdata=p_bir,
+            type="response")
+p_bir[p_bir$p1<0.5,] 
+# 17km in march and 20 km in Apr
+
 
 p1<-ggplot(data=out, aes(colour=dset, linetype=MONTH))+
   
