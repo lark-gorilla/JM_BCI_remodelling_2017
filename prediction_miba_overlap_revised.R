@@ -11,7 +11,9 @@ library(rgeos)
 library(rgdal)
 library(maptools)
 
-rasterTemplate<-raster("extract_rasters/bathy_1km.tif")
+land_mask<-raster("GIS/land_mask_wgs.tif")
+land_mask[is.na(values(land_mask)),]<-0
+land_mask[values(land_mask)==1,]<-NA
 
 
 #crop out Korean and conflict zone jm predictions
@@ -22,45 +24,77 @@ cols<-cols[cols$Location!="Daegugul Island" & cols$Location!="Dok Island/Takeshi
 
 sp_cols<-SpatialPoints(data.frame(cols$Longitude, cols$Latitude), proj4string=CRS("+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"))
 
-jap_miba<-readOGR( layer="japan_mIBA_network", dsn="GIS", verbose=TRUE)
-
-NAGASHIMA<-jap_miba[grep("Nagashima", jap_miba$NatName),]
-NAGASHIMA@polygons[[1]]@ID<-"99"
-row.names(NAGASHIMA@data)<-"99"
+jap_miba<-readOGR( layer="japan_mIBA_network_torishima_northwest_joined", dsn="GIS", verbose=TRUE)
 
 jap_miba<-jap_miba[which(jap_miba$NatName!="NA"),] # selects only marine ibas, not islands
 
-jap_miba<-spRbind(jap_miba, NAGASHIMA)
+# drop "Kamogawa estuary" as not around a JM colony
+jap_miba<-jap_miba[jap_miba$NatName!="Kamogawa estuary",] 
 
-plot(rasterTemplate)
+
+plot(land_mask)
 plot(jap_miba, add=T)
 plot(sp_cols, add=T)
 
+miba_overlap<-NULL
 for ( i in unique(jap_miba$NatName))
 {
-miba<-jap_miba[jap_miba$NatName==i,]
+  miba<-jap_miba[jap_miba$NatName==i,]
+  
+  ## remove holes (islands from polygon)
+  #https://gis.stackexchange.com/questions/224048/deleting-inner-holes-rings-borders-of-a-spatial-polygon-in-r
+  ring = SpatialPolygons(
+    list(Polygons(list(miba@polygons[[1]]@Polygons[[1]]),ID=1)),
+    proj4string=CRS( "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"))
+  
+  miba<-SpatialPolygonsDataFrame(ring,data=miba@data, match.ID=FALSE)
+  ####
+  
+  in_cols<-sp_cols[miba,] # select cols inside miba poly
 
-in_cols<-sp_cols[miba,] # select cols inside miba poly
+  miba_ras<-rasterize(miba, land_mask, field=1, background=0)
 
-miba_ras<-rasterize(miba, rasterTemplate, field=2, background=0)
-
-
-
-for(i in 1:length(sp_cols)) # loop yoinked from extract_raster_making.r
-{
-  Tshape <- sp_cols[i,]
+  Tshape <- in_cols
   DgProj <- CRS(paste("+proj=laea +lon_0=", Tshape@coords[1], " +lat_0=", Tshape@coords[2], sep=""))
   TshapeProj <- spTransform(Tshape, CRS=DgProj)
-  plot(TshapeProj)
-  TBuffProj <- gBuffer(TshapeProj, width=8000, quadsegs=50) #note the new buffer = max range from data
-  plot(TBuffProj)
-  plot(TshapeProj, add=T, col="grey")
-  TBuffProj@polygons[[1]]@ID <- as.character(i)
-  TBuffWgs <- spTransform(TBuffProj, CRS=CRS( "+proj=longlat +ellps=WGS84 +towgs84=0,0,0,0,0,0,0 +no_defs"))#from ras
-  col_inf<-rasterize(TBuffWgs, jm_pred, field=1, background=0)
-  if(i == 1) {col_fin <- col_inf} else {col_fin <- col_fin + col_inf}
+  TBuffProj8 <- gBuffer(TshapeProj, width=8000, quadsegs=50)
+  TBuffProj11 <- gBuffer(TshapeProj, width=11000, quadsegs=50)
+  TBuffProj30 <- gBuffer(TshapeProj, width=30000, quadsegs=50)
+  TBuffProj37 <- gBuffer(TshapeProj, width=37000, quadsegs=50)
+ 
+  TBuffWgs8 <- spTransform(TBuffProj8, CRS=CRS( "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"))
+  TBuffWgs11 <- spTransform(TBuffProj11, CRS=CRS( "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"))
+  TBuffWgs30 <- spTransform(TBuffProj30, CRS=CRS( "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"))#from ras
+  TBuffWgs37 <- spTransform(TBuffProj37, CRS=CRS( "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"))#from ras
+  
+  col_8km<-rasterize(TBuffWgs8, land_mask, field=1, background=0)
+  col_11km<-rasterize(TBuffWgs11, land_mask, field=1, background=0)
+  col_30km<-rasterize(TBuffWgs30, land_mask, field=1, background=0)
+  col_37km<-rasterize(TBuffWgs37, land_mask, field=1, background=0)
+  
+  cov8km<-(col_8km+miba_ras)+land_mask
+  cov11km<-(col_11km+miba_ras)+land_mask
+  cov30km<-(col_30km+miba_ras)+land_mask
+  cov37km<-(col_37km+miba_ras)+land_mask
+  
+  out<-data.frame(MIBA=i, buf8_inc= length(cov8km[values(cov8km)==2]),
+                  buf8_exc= length(cov8km[values(cov8km)==1]),
+                  buf11_inc= length(cov11km[values(cov11km)==2]),
+                  buf11_exc= length(cov11km[values(cov11km)==1]),
+                  buf30_inc= length(cov30km[values(cov30km)==2]),
+                  buf30_exc= length(cov30km[values(cov30km)==1]),
+                  buf37_inc= length(cov37km[values(cov37km)==2]),
+                  buf37_exc= length(cov37km[values(cov37km)==1]))
+  
+  miba_overlap<-rbind(out, miba_overlap)
   print(i)
-} 
+  }
+ 
+write.csv(miba_overlap,"~/research/miller_et_al/remodelling_2017/miba_overlap.csv",
+          quote=F, row.names=F)                 
+   
+  
+  
 
 col_fin[values(col_fin>0)]<-1
 col_fin[values(col_fin==0)]<-NA
