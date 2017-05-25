@@ -11,13 +11,16 @@ library(rgeos)
 library(rgdal)
 library(maptools)
 
+rasterTemplate<-raster("extract_rasters/bathy_1km.tif")
+
+
 #crop out Korean and conflict zone jm predictions
 
 cols<-read.csv("input_data/JM_colony_Japan_12_12_12_japan_comments.csv", h=T)
 
 cols<-cols[cols$Location!="Daegugul Island" & cols$Location!="Dok Island/Takeshima Island", ] #removes korean and conflict zone colonies
 
-sp_cols<-SpatialPoints(data.frame(cols$Longitude, cols$Latitude), proj4string=CRS("+proj=longlat + datum=wgs84"))
+sp_cols<-SpatialPoints(data.frame(cols$Longitude, cols$Latitude), proj4string=CRS("+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"))
 
 jap_miba<-readOGR( layer="japan_mIBA_network", dsn="GIS", verbose=TRUE)
 
@@ -28,6 +31,42 @@ row.names(NAGASHIMA@data)<-"99"
 jap_miba<-jap_miba[which(jap_miba$NatName!="NA"),] # selects only marine ibas, not islands
 
 jap_miba<-spRbind(jap_miba, NAGASHIMA)
+
+plot(rasterTemplate)
+plot(jap_miba, add=T)
+plot(sp_cols, add=T)
+
+for ( i in unique(jap_miba$NatName))
+{
+miba<-jap_miba[jap_miba$NatName==i,]
+
+in_cols<-sp_cols[miba,] # select cols inside miba poly
+
+miba_ras<-rasterize(miba, rasterTemplate, field=2, background=0)
+
+
+
+for(i in 1:length(sp_cols)) # loop yoinked from extract_raster_making.r
+{
+  Tshape <- sp_cols[i,]
+  DgProj <- CRS(paste("+proj=laea +lon_0=", Tshape@coords[1], " +lat_0=", Tshape@coords[2], sep=""))
+  TshapeProj <- spTransform(Tshape, CRS=DgProj)
+  plot(TshapeProj)
+  TBuffProj <- gBuffer(TshapeProj, width=8000, quadsegs=50) #note the new buffer = max range from data
+  plot(TBuffProj)
+  plot(TshapeProj, add=T, col="grey")
+  TBuffProj@polygons[[1]]@ID <- as.character(i)
+  TBuffWgs <- spTransform(TBuffProj, CRS=CRS( "+proj=longlat +ellps=WGS84 +towgs84=0,0,0,0,0,0,0 +no_defs"))#from ras
+  col_inf<-rasterize(TBuffWgs, jm_pred, field=1, background=0)
+  if(i == 1) {col_fin <- col_inf} else {col_fin <- col_fin + col_inf}
+  print(i)
+} 
+
+col_fin[values(col_fin>0)]<-1
+col_fin[values(col_fin==0)]<-NA
+
+
+
 
 DgProj <- CRS("+proj=laea +lon_0=134 +lat_0=34")
 
