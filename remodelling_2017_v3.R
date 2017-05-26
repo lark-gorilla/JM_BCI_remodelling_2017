@@ -760,6 +760,58 @@ write.csv(data.frame(
   "~/research/miller_et_al/remodelling_2017/_Izu_forage_SPAC.csv",
   quote=F, row.names=F)
 
+########## Oki ##########
+
+#IZU
+oki<-jm_data[jm_data$Location=="Oki",]
+
+# check for outliers
+
+boxes(oki[,7:16])
+
+oki<-oki[oki$SLOPE<4,]
+oki<-oki[oki$G_SST<2,]
+#izu_dens<-izu_dens[izu_dens$CHLA<2.5,]
+izu_raw<-oki
+boxes(oki[,7:16])
+
+# standardize for lme4 - will need to untransform for prediction
+enviro_std<-decostand(oki[,7:16], method="standardize")
+oki<-data.frame(oki[,1:6], enviro_std, oki[,17:21])
+
+table(oki$Density)# v few points, the count of 3 jm is spurious 
+# just an artefact of 1km grid aggregation, data is actually PA
+oki$PA<-0
+oki[oki$Density>0,]$PA<-1
+table(oki$PA)
+
+oki_bn<-glm(PA~BATHY + SLOPE + D_COL + SST +
+              G_SST + CHLA,
+            data=oki, family=binomial)
+print(sum(resid(oki_bn, type='pearson')^2)/df.residual(oki_bn))
+
+plot(oki_bn) #o
+
+drop1(oki_bn, test="Chisq") #get idea of who to drop
+
+bir_bn1<-glm(PA~ D_COL, data=oki, family=binomial)
+bir_bn2<-glm(PA~ D_COL +BATHY, data=oki, family=binomial)
+bir_bn3<-glm(PA~ D_COL +SLOPE, data=oki, family=binomial)
+bir_bn4<-glm(PA~ D_COL +SST, data=oki, family=binomial)
+bir_bn5<-glm(PA~ D_COL +G_SST, data=oki, family=binomial)
+bir_bn6<-glm(PA~ D_COL +CHLA, data=oki, family=binomial)
+
+#D_col is the only one worth keeping.
+
+anova(bir_bn1, bir_bn2, bir_bn3, bir_bn4, bir_bn5, bir_bn6)
+AIC(bir_bn1, bir_bn2, bir_bn3, bir_bn4, bir_bn5, bir_bn6)
+
+print(sum(resid(bir_bn1, type='pearson')^2)/df.residual(bir_bn1))
+summary(bir_bn1)
+
+# OKI model useless like Hachijojima. Instead do summary table
+# of different oceanographic preferences
+
 #######################################################
 # prediction of Colony models to validate themselves and one another #
 #######################################################
@@ -1053,7 +1105,19 @@ jpeg("~/research/miller_et_al/remodelling_2017/col_dist_plots2.jpg",
 p1
 dev.off()
 
+# Summary table of differing oceanography of surveyed colonies
 
-qplot(data=out, x=D_COLraw, y=pred, colour=dset, linetype=MONTH, geom="line")
+#col, n_murrs_observed, sst, chla, bathy, d_land
 
-# ok
+jm_data<-read.csv("input_data/dens_abs_1km_extract_correct.csv", h=T)
+
+
+izu<-jm_data[jm_data$Location=="Izu",]
+biro<-jm_data[jm_data$Location=="Birojima",]
+hcj<-jm_data[jm_data$Location=="Hchijojima",]
+oki<-jm_data[jm_data$Location=="Oki",]
+
+sum(izu$Density)
+
+
+
